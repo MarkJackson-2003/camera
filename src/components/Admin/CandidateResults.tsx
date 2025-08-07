@@ -10,23 +10,30 @@ import {
   Clock,
   User,
   Mail,
-  Phone
+  Phone,
+  Camera,
+  CheckCircle,
+  XCircle,
+  AlertCircle
 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
-import type { Interview } from '../../lib/supabase';
+import type { Interview, CandidateVerification } from '../../lib/supabase';
 import { format } from 'date-fns';
 import toast from 'react-hot-toast';
 
 export default function CandidateResults() {
   const [interviews, setInterviews] = useState<Interview[]>([]);
+  const [verifications, setVerifications] = useState<CandidateVerification[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedInterview, setSelectedInterview] = useState<Interview | null>(null);
+  const [selectedVerification, setSelectedVerification] = useState<CandidateVerification | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
   const [domainFilter, setDomainFilter] = useState('all');
 
   useEffect(() => {
     loadInterviews();
+    loadVerifications();
   }, []);
 
   const loadInterviews = async () => {
@@ -50,11 +57,58 @@ export default function CandidateResults() {
     }
   };
 
+  const loadVerifications = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('candidate_verifications')
+        .select(`
+          *,
+          candidate:candidates(*)
+        `)
+        .order('created_at', { ascending: false });
+
+      if (error) throw error;
+      setVerifications(data || []);
+    } catch (error) {
+      console.error('Error loading verifications:', error);
+    }
+  };
+
+  const updateVerificationStatus = async (verificationId: string, status: 'approved' | 'rejected') => {
+    try {
+      const { error } = await supabase
+        .from('candidate_verifications')
+        .update({ 
+          verification_status: status,
+          verified_at: new Date().toISOString()
+        })
+        .eq('id', verificationId);
+
+      if (error) throw error;
+      
+      toast.success(`Verification ${status} successfully`);
+      loadVerifications();
+      setSelectedVerification(null);
+    } catch (error) {
+      console.error('Error updating verification:', error);
+      toast.error('Failed to update verification status');
+    }
+  };
+
   const getStatusColor = (status: string) => {
     switch (status) {
       case 'completed': return 'bg-green-100 text-green-800';
       case 'in_progress': return 'bg-blue-100 text-blue-800';
       case 'abandoned': return 'bg-red-100 text-red-800';
+      default: return 'bg-gray-100 text-gray-800';
+    }
+  };
+
+  const getVerificationStatusColor = (status: string) => {
+    switch (status) {
+      case 'approved': return 'bg-green-100 text-green-800';
+      case 'rejected': return 'bg-red-100 text-red-800';
+      case 'pending': return 'bg-yellow-100 text-yellow-800';
       default: return 'bg-gray-100 text-gray-800';
     }
   };
@@ -155,7 +209,7 @@ export default function CandidateResults() {
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
           <h3 className="text-lg font-semibold text-gray-900">Interview Results</h3>
-          <p className="text-gray-600">View and export candidate interview results</p>
+          <p className="text-gray-600">View and export candidate interview results and ID verifications</p>
         </div>
         <div className="flex items-center gap-2">
           <button
@@ -173,6 +227,58 @@ export default function CandidateResults() {
             Export JSON
           </button>
         </div>
+      </div>
+
+      {/* ID Verifications Section */}
+      <div className="bg-white rounded-xl shadow-sm border border-gray-200">
+        <div className="p-6 border-b border-gray-200">
+          <h4 className="font-medium text-gray-900 mb-2">ID Verifications</h4>
+          <p className="text-sm text-gray-600">
+            Review and approve candidate ID verifications
+          </p>
+        </div>
+
+        {verifications.length === 0 ? (
+          <div className="p-8 text-center">
+            <Camera className="w-12 h-12 text-gray-400 mx-auto mb-4" />
+            <h3 className="text-lg font-medium text-gray-900 mb-2">No verifications found</h3>
+            <p className="text-gray-600">No ID verifications have been submitted yet</p>
+          </div>
+        ) : (
+          <div className="divide-y divide-gray-200">
+            {verifications.slice(0, 5).map((verification) => (
+              <div key={verification.id} className="p-6 hover:bg-gray-50">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-4">
+                    <div className="w-12 h-12 bg-blue-100 rounded-full flex items-center justify-center">
+                      <Camera className="w-6 h-6 text-blue-600" />
+                    </div>
+                    <div>
+                      <div className="font-medium text-gray-900">
+                        {verification.candidate?.name}
+                      </div>
+                      <div className="text-sm text-gray-500">
+                        {verification.verification_type.toUpperCase()} • {format(new Date(verification.created_at), 'MMM dd, yyyy HH:mm')}
+                      </div>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <span className={`px-2 py-1 text-xs font-medium rounded-full ${getVerificationStatusColor(verification.verification_status)}`}>
+                      {verification.verification_status}
+                    </span>
+                    <button
+                      onClick={() => setSelectedVerification(verification)}
+                      className="flex items-center gap-1 px-3 py-1 text-sm text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+                    >
+                      <Eye className="w-4 h-4" />
+                      Review
+                    </button>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* Filters */}
@@ -345,6 +451,104 @@ export default function CandidateResults() {
         )}
       </div>
 
+      {/* ID Verification Modal */}
+      {selectedVerification && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-xl shadow-xl max-w-2xl w-full max-h-[90vh] overflow-y-auto">
+            <div className="p-6 border-b border-gray-200">
+              <div className="flex items-center justify-between">
+                <h3 className="text-lg font-semibold text-gray-900">
+                  ID Verification - {selectedVerification.candidate?.name}
+                </h3>
+                <button
+                  onClick={() => setSelectedVerification(null)}
+                  className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
+                >
+                  ×
+                </button>
+              </div>
+            </div>
+            
+            <div className="p-6 space-y-6">
+              {/* Verification Details */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div>
+                  <h4 className="font-medium text-gray-900 mb-3">Candidate Information</h4>
+                  <div className="space-y-2 text-sm">
+                    <div className="flex justify-between">
+                      <span className="text-gray-500">Name:</span>
+                      <span className="font-medium">{selectedVerification.candidate?.name}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-gray-500">Email:</span>
+                      <span className="font-medium">{selectedVerification.candidate?.email}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-gray-500">Submitted:</span>
+                      <span className="font-medium">{format(new Date(selectedVerification.created_at), 'MMM dd, yyyy HH:mm')}</span>
+                    </div>
+                  </div>
+                </div>
+                
+                <div>
+                  <h4 className="font-medium text-gray-900 mb-3">Verification Details</h4>
+                  <div className="space-y-2 text-sm">
+                    <div className="flex justify-between">
+                      <span className="text-gray-500">ID Type:</span>
+                      <span className="font-medium uppercase">{selectedVerification.verification_type}</span>
+                    </div>
+                    {selectedVerification.id_number && (
+                      <div className="flex justify-between">
+                        <span className="text-gray-500">ID Number:</span>
+                        <span className="font-medium">{selectedVerification.id_number}</span>
+                      </div>
+                    )}
+                    <div className="flex justify-between">
+                      <span className="text-gray-500">Status:</span>
+                      <span className={`font-medium px-2 py-1 text-xs rounded-full ${getVerificationStatusColor(selectedVerification.verification_status)}`}>
+                        {selectedVerification.verification_status}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* ID Photo */}
+              <div>
+                <h4 className="font-medium text-gray-900 mb-3">Submitted ID Photo</h4>
+                <div className="bg-gray-100 rounded-lg p-4">
+                  <img
+                    src={selectedVerification.photo_url}
+                    alt="ID Verification"
+                    className="w-full max-h-96 object-contain rounded-lg"
+                  />
+                </div>
+              </div>
+
+              {/* Action Buttons */}
+              {selectedVerification.verification_status === 'pending' && (
+                <div className="flex gap-4 pt-4 border-t border-gray-200">
+                  <button
+                    onClick={() => updateVerificationStatus(selectedVerification.id, 'approved')}
+                    className="flex items-center gap-2 px-6 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
+                  >
+                    <CheckCircle className="w-4 h-4" />
+                    Approve
+                  </button>
+                  <button
+                    onClick={() => updateVerificationStatus(selectedVerification.id, 'rejected')}
+                    className="flex items-center gap-2 px-6 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors"
+                  >
+                    <XCircle className="w-4 h-4" />
+                    Reject
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Detailed View Modal */}
       {selectedInterview && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
@@ -401,6 +605,16 @@ export default function CandidateResults() {
                       <span className="text-gray-500">Exam Code:</span>
                       <span className="font-mono text-xs bg-gray-100 px-2 py-1 rounded">
                         {selectedInterview.exam_code_used}
+                      </span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-gray-500">Total Score:</span>
+                      <span className="font-medium">{selectedInterview.total_score}/{selectedInterview.max_possible_score}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-gray-500">Violations:</span>
+                      <span className={`font-medium ${selectedInterview.violation_count >= 2 ? 'text-red-600' : 'text-gray-900'}`}>
+                        {selectedInterview.violation_count || 0}
                       </span>
                     </div>
                   </div>
