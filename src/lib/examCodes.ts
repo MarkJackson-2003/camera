@@ -1,22 +1,24 @@
 import { supabase } from './supabase';
 import type { ExamCode } from './supabase';
 
-export const generateExamCode = async (domainId: string, adminId: string) => {
+export const generateExamCode = async (domainId: string, adminId: string, experienceLevel: 'fresher' | 'experienced') => {
   try {
     // Generate unique code
     const timestamp = Date.now();
     const random = Math.floor(Math.random() * 1000);
-    const code = `EXAM${timestamp}${random}`.slice(-12).toUpperCase();
+    const prefix = experienceLevel === 'fresher' ? 'FR' : 'EX';
+    const code = `${prefix}${timestamp}${random}`.slice(-12).toUpperCase();
 
     // Set validity period (2 hours from now)
     const validFrom = new Date();
     const validUntil = new Date(validFrom.getTime() + 2 * 60 * 60 * 1000);
 
-    // Deactivate previous codes for this domain
+    // Deactivate previous codes for this domain and experience level
     await supabase
       .from('exam_codes')
       .update({ is_active: false })
-      .eq('domain_id', domainId);
+      .eq('domain_id', domainId)
+      .eq('experience_level', experienceLevel);
 
     // Insert new code
     const { data, error } = await supabase
@@ -24,6 +26,7 @@ export const generateExamCode = async (domainId: string, adminId: string) => {
       .insert({
         code,
         domain_id: domainId,
+        experience_level: experienceLevel,
         valid_from: validFrom.toISOString(),
         valid_until: validUntil.toISOString(),
         created_by: adminId,

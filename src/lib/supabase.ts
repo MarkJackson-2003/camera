@@ -60,6 +60,7 @@ export interface ExamCode {
   id: string;
   code: string;
   domain_id: string;
+  experience_level: 'fresher' | 'experienced';
   valid_from: string;
   valid_until: string;
   is_active: boolean;
@@ -73,6 +74,19 @@ export interface Candidate {
   phone?: string;
   otp_verified: boolean;
   profile_data: any;
+}
+
+export interface CandidateVerification {
+  id: string;
+  candidate_id: string;
+  verification_type: 'aadhar' | 'pan' | 'other';
+  id_number?: string;
+  photo_url: string;
+  verification_status: 'pending' | 'approved' | 'rejected';
+  verified_by?: string;
+  verified_at?: string;
+  created_at: string;
+  candidate?: Candidate;
 }
 
 export interface Interview {
@@ -90,6 +104,7 @@ export interface Interview {
   time_taken?: number;
   current_question_index: number;
   questions_assigned: string[];
+  violation_count: number;
   ai_feedback?: string;
   overall_rating?: 'excellent' | 'good' | 'average' | 'poor';
   candidate?: Candidate;

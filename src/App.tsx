@@ -13,11 +13,12 @@ import CandidateDashboard from './components/Candidate/CandidateDashboard';
 // Interview Components
 import InterviewInterface from './components/Interview/InterviewInterface';
 import InterviewComplete from './components/Interview/InterviewComplete';
+import IDVerification from './components/Candidate/IDVerification';
 
-import type { Domain, ExamCode, Interview } from './lib/supabase';
+import type { Domain, ExamCode, Interview, CandidateVerification } from './lib/supabase';
 
 type UserType = 'admin' | 'candidate' | null;
-type AppState = 'login' | 'dashboard' | 'interview' | 'complete';
+type AppState = 'login' | 'dashboard' | 'verification' | 'interview' | 'complete';
 
 function App() {
   const [userType, setUserType] = useState<UserType>(null);
@@ -26,9 +27,9 @@ function App() {
   const [interviewData, setInterviewData] = useState<{
     domain: Domain;
     examCode: ExamCode;
-    experienceLevel: string;
   } | null>(null);
   const [completedInterview, setCompletedInterview] = useState<Interview | null>(null);
+  const [verificationData, setVerificationData] = useState<CandidateVerification | null>(null);
 
   useEffect(() => {
     // Check for existing sessions
@@ -66,14 +67,24 @@ function App() {
     setCompletedInterview(null);
   };
 
-  const handleStartInterview = (domain: Domain, examCode: ExamCode, experienceLevel: string) => {
-    setInterviewData({ domain, examCode, experienceLevel });
-    setAppState('interview');
+  const handleStartInterview = (domain: Domain, examCode: ExamCode) => {
+    setInterviewData({ domain, examCode });
+    setAppState('verification');
   };
 
   const handleInterviewComplete = (interview: Interview) => {
     setCompletedInterview(interview);
     setAppState('complete');
+  };
+
+  const handleVerificationComplete = (verification: CandidateVerification) => {
+    setVerificationData(verification);
+    setAppState('interview');
+  };
+
+  const handleVerificationSkip = () => {
+    // For testing purposes, allow skipping verification
+    setAppState('interview');
   };
 
   const handleGoHome = () => {
@@ -157,6 +168,18 @@ function App() {
       );
     }
     
+    if (appState === 'verification' && interviewData) {
+      return (
+        <>
+          <IDVerification
+            candidate={currentUser}
+            onVerificationComplete={handleVerificationComplete}
+          />
+          <Toaster position="top-right" />
+        </>
+      );
+    }
+    
     if (appState === 'interview' && interviewData) {
       return (
         <>
@@ -164,7 +187,6 @@ function App() {
             candidate={currentUser}
             domain={interviewData.domain}
             examCode={interviewData.examCode}
-            experienceLevel={interviewData.experienceLevel}
             onComplete={handleInterviewComplete}
           />
           <Toaster position="top-right" />

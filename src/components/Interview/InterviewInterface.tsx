@@ -26,7 +26,6 @@ interface InterviewInterfaceProps {
   candidate: any;
   domain: Domain;
   examCode: ExamCode;
-  experienceLevel: string;
   onComplete: (interview: Interview) => void;
 }
 
@@ -34,7 +33,6 @@ export default function InterviewInterface({
   candidate, 
   domain, 
   examCode, 
-  experienceLevel, 
   onComplete 
 }: InterviewInterfaceProps) {
   const [interview, setInterview] = useState<Interview | null>(null);
@@ -80,7 +78,7 @@ export default function InterviewInterface({
         .from('questions')
         .select('*')
         .eq('domain_id', domain.id)
-        .eq('experience_level', experienceLevel)
+        .eq('experience_level', examCode.experience_level)
         .eq('is_active', true)
         .order('difficulty', { ascending: true });
 
@@ -101,11 +99,12 @@ export default function InterviewInterface({
           candidate_id: candidate.id,
           domain_id: domain.id,
           exam_code_used: examCode.code,
-          experience_level: experienceLevel,
+          experience_level: examCode.experience_level,
           status: 'in_progress',
           questions_assigned: questionsData.map(q => q.id),
           max_possible_score: questionsData.reduce((sum, q) => sum + q.max_score, 0),
-          current_question_index: 0
+          current_question_index: 0,
+          violation_count: 0
         })
         .select()
         .single();
@@ -143,6 +142,19 @@ export default function InterviewInterface({
     
     // Log violation to database
     if (interview) {
+      // Update violation count
+      const newViolationCount = interview.violation_count + 1;
+      
+      supabase
+        .from('interviews')
+        .update({ violation_count: newViolationCount })
+        .eq('id', interview.id)
+        .then(() => {
+          setInterview(prev => prev ? { ...prev, violation_count: newViolationCount } : null);
+        })
+        .catch(console.error);
+      
+      // Log detailed violation
       supabase
         .from('interview_violations')
         .insert({
@@ -150,14 +162,11 @@ export default function InterviewInterface({
           violation_type: type,
           violation_details: details,
           timestamp: violation.timestamp.toISOString()
-        })
-        .then(({ error }) => {
-          if (error) console.error('Failed to log violation:', error);
         });
     }
     
-    // Auto-submit if too many violations
-    if (violations.length >= 5) {
+    // Auto-submit if 3 or more violations
+    if (violations.length >= 3) {
       toast.error('Too many violations detected. Auto-submitting exam.');
       setTimeout(() => {
         handleAutoSubmit();
@@ -327,14 +336,39 @@ export default function InterviewInterface({
 
   const handleAutoSubmit = useCallback(async () => {
     toast.info('Time is up! Auto-submitting current answer...');
-    await handleSubmitAnswer();
-  }, [currentQuestion, interview, currentAnswer]);
+    
+    if (!interview) return;
+    
+    try {
+      // Mark interview as completed due to timeout
+      await supabase
+        .from('interviews')
+        .update({ status: 'completed', end_time: new Date().toISOString() })
+        .eq('id', interview.id);
+      
+      await completeInterview();
+    } catch (error) {
+      console.error('Auto-submit failed:', error);
+    }
+  }, [interview]);
 
   const formatTime = (seconds: number) => {
     const hours = Math.floor(seconds / 3600);
     const minutes = Math.floor((seconds % 3600) / 60);
     const secs = seconds % 60;
     return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+  };
+
+  const getTimeColor = (seconds: number) => {
+    if (seconds < 300) return 'text-red-600 animate-pulse'; // Less than 5 minutes
+    if (seconds < 600) return 'text-orange-600'; // Less than 10 minutes
+    return 'text-gray-900';
+  };
+
+  const getTimeBackground = (seconds: number) => {
+    if (seconds < 300) return 'bg-red-50 border-red-200'; // Less than 5 minutes
+    if (seconds < 600) return 'bg-orange-50 border-orange-200'; // Less than 10 minutes
+    return 'bg-white border-gray-200';
   };
 
   const getQuestionIcon = (type: string) => {
@@ -450,11 +484,16 @@ export default function InterviewInterface({
               </div>
             </div>
 
-            <div className="flex items-center gap-6">
-              <div className="flex items-center gap-2">
+            <div className="flex items-center gap-4">
+              <div className={`flex items-center gap-2 px-3 py-2 rounded-lg border ${getTimeBackground(timeRemaining)}`}>
                 <Clock className="w-5 h-5 text-red-500" />
-                <span className={`font-mono text-lg font-bold ${
-                  timeRemaining < 300 ? 'text-red-600' : 'text-gray-900'
+                <span className={`font-mono text-lg font-bold ${getTimeColor(timeRemaining)}`}>
+                  {formatTime(timeRemaining)}
+                </span>
+                {timeRemaining < 300 && (
+                  <span className="text-xs text-red-600 font-medium">
+                    URGENT
+                  </span>
                 }`}>
                   {formatTime(timeRemaining)}
                 </span>
@@ -465,9 +504,11 @@ export default function InterviewInterface({
               </div>
               
               {violations.length > 0 && (
-                <div className="flex items-center gap-2 text-sm text-red-600">
+                <div className={`flex items-center gap-2 text-sm px-2 py-1 rounded ${
+                  violations.length >= 2 ? 'bg-red-100 text-red-800' : 'text-red-600'
+                }`}>
                   <AlertCircle className="w-4 h-4" />
-                  <span>Violations: {violations.length}</span>
+                  <span>Violations: {violations.length}/3</span>
                 </div>
               )}
             </div>
@@ -481,9 +522,9 @@ export default function InterviewInterface({
                 {Math.round(((currentQuestionIndex) / questions.length) * 100)}%
               </span>
             </div>
-            <div className="w-full bg-gray-200 rounded-full h-2">
+            <div className="w-full bg-gray-200 rounded-full h-3">
               <div 
-                className="bg-blue-600 h-2 rounded-full transition-all duration-300"
+                className="bg-gradient-to-r from-blue-500 to-blue-600 h-3 rounded-full transition-all duration-500 shadow-sm"
                 style={{ width: `${((currentQuestionIndex) / questions.length) * 100}%` }}
               />
             </div>
@@ -717,7 +758,7 @@ export default function InterviewInterface({
                 </div>
                 <div className="flex justify-between">
                   <span className="text-gray-500">Level:</span>
-                  <span className="font-medium capitalize">{experienceLevel}</span>
+                  <span className="font-medium capitalize">{examCode.experience_level}</span>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-gray-500">Questions:</span>
@@ -735,18 +776,38 @@ export default function InterviewInterface({
                     {proctoringActive ? 'Active' : 'Inactive'}
                   </span>
                 </div>
+                <div className="flex justify-between">
+                  <span className="text-gray-500">Violations:</span>
+                  <span className={`font-medium ${violations.length >= 2 ? 'text-red-600' : 'text-gray-900'}`}>
+                    {violations.length}/3
+                  </span>
+                </div>
               </div>
             </div>
 
-            {/* Warning */}
-            <div className="bg-red-50 rounded-xl border border-red-200 p-4">
+            {/* Warnings */}
+            <div className={`rounded-xl border p-4 ${
+              violations.length >= 2 
+                ? 'bg-red-50 border-red-200' 
+                : 'bg-yellow-50 border-yellow-200'
+            }`}>
               <div className="flex items-start gap-2">
-                <AlertCircle className="w-5 h-5 text-red-600 mt-0.5 flex-shrink-0" />
+                <AlertCircle className={`w-5 h-5 mt-0.5 flex-shrink-0 ${
+                  violations.length >= 2 ? 'text-red-600' : 'text-yellow-600'
+                }`} />
                 <div>
-                  <h4 className="font-medium text-red-900 mb-1">Important</h4>
-                  <p className="text-sm text-red-800">
-                    This exam is being proctored. Do not refresh, navigate away, or switch tabs. 
-                    Violations will be recorded and may result in exam termination.
+                  <h4 className={`font-medium mb-1 ${
+                    violations.length >= 2 ? 'text-red-900' : 'text-yellow-900'
+                  }`}>
+                    {violations.length >= 2 ? 'Critical Warning' : 'Important'}
+                  </h4>
+                  <p className={`text-sm ${
+                    violations.length >= 2 ? 'text-red-800' : 'text-yellow-800'
+                  }`}>
+                    {violations.length >= 2 
+                      ? 'You have multiple violations. One more violation will auto-submit your exam!'
+                      : 'This exam is being proctored. Do not refresh, navigate away, or switch tabs.'
+                    }
                   </p>
                 </div>
               </div>

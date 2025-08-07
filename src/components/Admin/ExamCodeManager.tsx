@@ -59,12 +59,12 @@ export default function ExamCodeManager({ admin }: ExamCodeManagerProps) {
     }
   };
 
-  const handleGenerateCode = async (domainId: string) => {
-    setGeneratingFor(domainId);
+  const handleGenerateCode = async (domainId: string, experienceLevel: 'fresher' | 'experienced') => {
+    setGeneratingFor(`${domainId}-${experienceLevel}`);
     setLoading(true);
 
     try {
-      await generateExamCode(domainId, admin.id);
+      await generateExamCode(domainId, admin.id, experienceLevel);
       toast.success('Exam code generated successfully!');
       loadExamCodes();
     } catch (error) {
@@ -131,8 +131,8 @@ export default function ExamCodeManager({ admin }: ExamCodeManagerProps) {
         <h4 className="font-medium text-gray-900 mb-4">Generate New Exam Codes</h4>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           {domains.map((domain) => {
-            const existingCode = examCodes.find(code => code.domain_id === domain.id);
-            const isGenerating = generatingFor === domain.id;
+            const fresherCode = examCodes.find(code => code.domain_id === domain.id && code.experience_level === 'fresher');
+            const experiencedCode = examCodes.find(code => code.domain_id === domain.id && code.experience_level === 'experienced');
             
             return (
               <div key={domain.id} className="p-4 border border-gray-200 rounded-lg">
@@ -141,53 +141,111 @@ export default function ExamCodeManager({ admin }: ExamCodeManagerProps) {
                   <span className="font-medium text-gray-900">{domain.name}</span>
                 </div>
                 
-                {existingCode ? (
-                  <div className="space-y-2">
-                    <div className="flex items-center gap-2">
-                      <span className="font-mono text-sm bg-gray-100 px-2 py-1 rounded">
-                        {existingCode.code}
-                      </span>
-                      <button
-                        onClick={() => copyToClipboard(existingCode.code)}
-                        className="p-1 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded"
-                      >
-                        <Copy className="w-3 h-3" />
-                      </button>
+                {/* Fresher Code */}
+                <div className="mb-3">
+                  <div className="text-xs font-medium text-blue-600 mb-1">Fresher</div>
+                  {fresherCode ? (
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-2">
+                        <span className="font-mono text-xs bg-blue-100 px-2 py-1 rounded">
+                          {fresherCode.code}
+                        </span>
+                        <button
+                          onClick={() => copyToClipboard(fresherCode.code)}
+                          className="p-1 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded"
+                        >
+                          <Copy className="w-3 h-3" />
+                        </button>
+                      </div>
+                      <div className={`text-xs flex items-center gap-1 ${
+                        isExpiringSoon(fresherCode.valid_until) 
+                          ? 'text-orange-600' 
+                          : 'text-green-600'
+                      }`}>
+                        {isExpiringSoon(fresherCode.valid_until) ? (
+                          <AlertCircle className="w-2 h-2" />
+                        ) : (
+                          <CheckCircle className="w-2 h-2" />
+                        )}
+                        {getTimeRemaining(fresherCode.valid_until)}
+                      </div>
                     </div>
-                    <div className={`text-xs flex items-center gap-1 ${
-                      isExpiringSoon(existingCode.valid_until) 
-                        ? 'text-orange-600' 
-                        : 'text-green-600'
-                    }`}>
-                      {isExpiringSoon(existingCode.valid_until) ? (
-                        <AlertCircle className="w-3 h-3" />
-                      ) : (
-                        <CheckCircle className="w-3 h-3" />
-                      )}
-                      {getTimeRemaining(existingCode.valid_until)}
-                    </div>
-                  </div>
-                ) : (
-                  <p className="text-sm text-gray-500 mb-2">No active code</p>
-                )}
-                
-                <button
-                  onClick={() => handleGenerateCode(domain.id)}
-                  disabled={loading}
-                  className="w-full mt-3 flex items-center justify-center gap-2 px-3 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors"
-                >
-                  {isGenerating ? (
-                    <>
-                      <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                      Generating...
-                    </>
                   ) : (
-                    <>
-                      <Plus className="w-4 h-4" />
-                      {existingCode ? 'Regenerate' : 'Generate'}
-                    </>
+                    <p className="text-xs text-gray-500">No active code</p>
                   )}
-                </button>
+                </div>
+
+                {/* Experienced Code */}
+                <div className="mb-3">
+                  <div className="text-xs font-medium text-purple-600 mb-1">Experienced</div>
+                  {experiencedCode ? (
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-2">
+                        <span className="font-mono text-xs bg-purple-100 px-2 py-1 rounded">
+                          {experiencedCode.code}
+                        </span>
+                        <button
+                          onClick={() => copyToClipboard(experiencedCode.code)}
+                          className="p-1 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded"
+                        >
+                          <Copy className="w-3 h-3" />
+                        </button>
+                      </div>
+                      <div className={`text-xs flex items-center gap-1 ${
+                        isExpiringSoon(experiencedCode.valid_until) 
+                          ? 'text-orange-600' 
+                          : 'text-green-600'
+                      }`}>
+                        {isExpiringSoon(experiencedCode.valid_until) ? (
+                          <AlertCircle className="w-2 h-2" />
+                        ) : (
+                          <CheckCircle className="w-2 h-2" />
+                        )}
+                        {getTimeRemaining(experiencedCode.valid_until)}
+                      </div>
+                    </div>
+                  ) : (
+                    <p className="text-xs text-gray-500">No active code</p>
+                  )}
+                </div>
+                
+                {/* Generate Buttons */}
+                <div className="space-y-2">
+                  <button
+                    onClick={() => handleGenerateCode(domain.id, 'fresher')}
+                    disabled={loading}
+                    className="w-full flex items-center justify-center gap-2 px-2 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50 transition-colors"
+                  >
+                    {generatingFor === `${domain.id}-fresher` ? (
+                      <>
+                        <div className="w-3 h-3 border border-white border-t-transparent rounded-full animate-spin" />
+                        Generating...
+                      </>
+                    ) : (
+                      <>
+                        <Plus className="w-3 h-3" />
+                        {fresherCode ? 'Regenerate Fresher' : 'Generate Fresher'}
+                      </>
+                    )}
+                  </button>
+                  <button
+                    onClick={() => handleGenerateCode(domain.id, 'experienced')}
+                    disabled={loading}
+                    className="w-full flex items-center justify-center gap-2 px-2 py-1 text-xs bg-purple-600 text-white rounded hover:bg-purple-700 disabled:opacity-50 transition-colors"
+                  >
+                    {generatingFor === `${domain.id}-experienced` ? (
+                      <>
+                        <div className="w-3 h-3 border border-white border-t-transparent rounded-full animate-spin" />
+                        Generating...
+                      </>
+                    ) : (
+                      <>
+                        <Plus className="w-3 h-3" />
+                        {experiencedCode ? 'Regenerate Experienced' : 'Generate Experienced'}
+                      </>
+                    )}
+                  </button>
+                </div>
               </div>
             );
           })}
@@ -218,6 +276,13 @@ export default function ExamCodeManager({ admin }: ExamCodeManagerProps) {
                     <div className="flex items-center gap-3 mb-2">
                       <span className="font-medium text-gray-900">
                         {examCode.domain?.name || 'Unknown Domain'}
+                      </span>
+                      <span className={`px-2 py-1 text-xs font-medium rounded-full ${
+                        examCode.experience_level === 'fresher'
+                          ? 'bg-blue-100 text-blue-800'
+                          : 'bg-purple-100 text-purple-800'
+                      }`}>
+                        {examCode.experience_level}
                       </span>
                       <span className={`px-2 py-1 text-xs font-medium rounded-full ${
                         isExpiringSoon(examCode.valid_until)
