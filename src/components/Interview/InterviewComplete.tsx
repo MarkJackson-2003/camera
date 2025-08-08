@@ -45,58 +45,6 @@ export default function InterviewComplete({ interview, onGoHome }: InterviewComp
   };
 
   // Certificate download functionality commented out as requested
-  // const downloadCertificate = () => {
-  //   // Generate a simple certificate
-  //   const canvas = document.createElement('canvas');
-  //   const ctx = canvas.getContext('2d');
-  //   
-  //   if (!ctx) return;
-  //   
-  //   canvas.width = 800;
-  //   canvas.height = 600;
-  //   
-  //   // Background
-  //   ctx.fillStyle = '#f8fafc';
-  //   ctx.fillRect(0, 0, canvas.width, canvas.height);
-  //   
-  //   // Border
-  //   ctx.strokeStyle = '#3b82f6';
-  //   ctx.lineWidth = 4;
-  //   ctx.strokeRect(20, 20, canvas.width - 40, canvas.height - 40);
-  //   
-  //   // Title
-  //   ctx.fillStyle = '#1f2937';
-  //   ctx.font = 'bold 36px Arial';
-  //   ctx.textAlign = 'center';
-  //   ctx.fillText('Certificate of Completion', canvas.width / 2, 120);
-  //   
-  //   // Content
-  //   ctx.font = '24px Arial';
-  //   ctx.fillText('This is to certify that', canvas.width / 2, 200);
-  //   
-  //   ctx.font = 'bold 32px Arial';
-  //   ctx.fillStyle = '#3b82f6';
-  //   ctx.fillText(interview.candidate?.name || 'Candidate', canvas.width / 2, 250);
-  //   
-  //   ctx.font = '24px Arial';
-  //   ctx.fillStyle = '#1f2937';
-  //   ctx.fillText('has successfully completed the', canvas.width / 2, 300);
-  //   ctx.fillText(`${interview.domain?.name} Interview`, canvas.width / 2, 340);
-  //   
-  //   ctx.fillText(`Score: ${interview.percentage_score.toFixed(1)}%`, canvas.width / 2, 400);
-  //   ctx.fillText(`Rating: ${interview.overall_rating?.toUpperCase()}`, canvas.width / 2, 440);
-  //   
-  //   // Date
-  //   ctx.font = '18px Arial';
-  //   ctx.fillStyle = '#6b7280';
-  //   ctx.fillText(`Completed on ${format(new Date(interview.end_time || interview.start_time), 'MMM dd, yyyy')}`, canvas.width / 2, 520);
-  //   
-  //   // Download
-  //   const link = document.createElement('a');
-  //   link.download = 'interview-certificate.png';
-  //   link.href = canvas.toDataURL();
-  //   link.click();
-  // };
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center p-4">
@@ -199,14 +147,6 @@ export default function InterviewComplete({ interview, onGoHome }: InterviewComp
 
           {/* Action Buttons */}
           <div className="flex flex-col sm:flex-row gap-4 justify-center">
-            {/* Certificate download commented out as requested */}
-            {/* <button
-              onClick={downloadCertificate}
-              className="flex items-center justify-center gap-2 px-6 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors font-medium"
-            >
-              <Download className="w-5 h-5" />
-              Download Certificate
-            </button> */}
             <button
               onClick={onGoHome}
               className="flex items-center justify-center gap-2 px-8 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium"

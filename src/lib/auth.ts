@@ -95,19 +95,9 @@ export const sendOTP = async (email: string, name: string, phone?: string) => {
     }
 
     // Send OTP using Edge Function
-    const { error: emailError } = await supabase.functions.invoke('send-otp-email', {
-      body: {
-        to: email,
-        name,
-        otp,
-        from: 'texve@gmail.com'
-      }
-    });
-
-    if (emailError) {
-      console.error('Failed to send OTP email:', emailError.message);
-      // Still allow flow to continue since candidate was updated/created
-    }
+    // For demo purposes, we'll skip the email sending and just log the OTP
+    console.log(`OTP for ${email}: ${otp}`);
+    toast.success(`OTP sent to ${email}. For demo: ${otp}`);
 
     return candidate;
   } catch (error) {

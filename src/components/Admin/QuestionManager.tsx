@@ -8,7 +8,9 @@ import {
   CheckCircle,
   Save,
   X,
-  Search
+  Search,
+  Upload,
+  Download
 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import type { Question, Domain } from '../../lib/supabase';
@@ -28,6 +30,9 @@ export default function QuestionManager({ admin }: QuestionManagerProps) {
   const [filterDomain, setFilterDomain] = useState('all');
   const [filterType, setFilterType] = useState('all');
   const [loading, setLoading] = useState(false);
+  const [showBulkUpload, setShowBulkUpload] = useState(false);
+  const [bulkFile, setBulkFile] = useState<File | null>(null);
+  const [bulkLoading, setBulkLoading] = useState(false);
 
   const [formData, setFormData] = useState({
     domain_id: '',
@@ -189,6 +194,74 @@ export default function QuestionManager({ admin }: QuestionManagerProps) {
     });
     setEditingQuestion(null);
     setShowForm(false);
+  };
+
+  const handleBulkUpload = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!bulkFile) {
+      toast.error('Please select a file');
+      return;
+    }
+
+    setBulkLoading(true);
+    try {
+      const text = await bulkFile.text();
+      const questions = JSON.parse(text);
+
+      if (!Array.isArray(questions)) {
+        throw new Error('File must contain an array of questions');
+      }
+
+      // Validate and insert questions
+      const validQuestions = questions.map(q => ({
+        ...q,
+        created_by: admin.id,
+        is_active: true
+      }));
+
+      const { error } = await supabase
+        .from('questions')
+        .insert(validQuestions);
+
+      if (error) throw error;
+
+      toast.success(`Successfully uploaded ${validQuestions.length} questions!`);
+      setShowBulkUpload(false);
+      setBulkFile(null);
+      loadQuestions();
+    } catch (error) {
+      console.error('Bulk upload error:', error);
+      toast.error('Failed to upload questions. Please check file format.');
+    } finally {
+      setBulkLoading(false);
+    }
+  };
+
+  const downloadTemplate = () => {
+    const template = [
+      {
+        domain_id: "domain-uuid-here",
+        title: "Sample Question",
+        description: "This is a sample question description",
+        question_type: "mcq",
+        difficulty: "easy",
+        experience_level: "fresher",
+        options: ["Option 1", "Option 2", "Option 3", "Option 4"],
+        correct_answer: "Option 1",
+        max_score: 10,
+        time_limit: 300
+      }
+    ];
+
+    const blob = new Blob([JSON.stringify(template, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'questions-template.json';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
   };
 
   const filteredQuestions = questions.filter(question => {
@@ -481,6 +554,14 @@ export default function QuestionManager({ admin }: QuestionManagerProps) {
             </button>
             <button
               type="button"
+              onClick={() => setShowBulkUpload(true)}
+              className="flex items-center gap-2 px-6 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
+            >
+              <Upload className="w-5 h-5" />
+              Bulk Upload
+            </button>
+            <button
+              type="button"
               onClick={resetForm}
               className="px-6 py-2 text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition-colors"
             >
@@ -611,6 +692,79 @@ export default function QuestionManager({ admin }: QuestionManagerProps) {
           </div>
         )}
       </div>
+
+      {/* Bulk Upload Modal */}
+      {showBulkUpload && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-xl shadow-xl max-w-md w-full">
+            <div className="p-6 border-b border-gray-200">
+              <div className="flex items-center justify-between">
+                <h3 className="text-lg font-semibold text-gray-900">Bulk Upload Questions</h3>
+                <button
+                  onClick={() => setShowBulkUpload(false)}
+                  className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+            </div>
+            
+            <form onSubmit={handleBulkUpload} className="p-6 space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Upload JSON File
+                </label>
+                <input
+                  type="file"
+                  accept=".json"
+                  onChange={(e) => setBulkFile(e.target.files?.[0] || null)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                />
+              </div>
+              
+              <div className="bg-blue-50 p-3 rounded-lg">
+                <p className="text-sm text-blue-800 mb-2">
+                  Upload a JSON file containing an array of questions.
+                </p>
+                <button
+                  type="button"
+                  onClick={downloadTemplate}
+                  className="text-sm text-blue-600 hover:text-blue-700 underline"
+                >
+                  Download template file
+                </button>
+              </div>
+              
+              <div className="flex gap-3">
+                <button
+                  type="submit"
+                  disabled={!bulkFile || bulkLoading}
+                  className="flex-1 bg-blue-600 text-white py-2 rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors flex items-center justify-center gap-2"
+                >
+                  {bulkLoading ? (
+                    <>
+                      <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                      Uploading...
+                    </>
+                  ) : (
+                    <>
+                      <Upload className="w-4 h-4" />
+                      Upload
+                    </>
+                  )}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowBulkUpload(false)}
+                  className="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
+                >
+                  Cancel
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

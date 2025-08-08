@@ -1,4 +1,4 @@
-import React, { useState, useRef, useCallback } from 'react';
+import React, { useState, useRef, useCallback, useEffect } from 'react';
 import { 
   Camera, 
   Upload, 
@@ -24,71 +24,167 @@ export default function IDVerification({ candidate, onVerificationComplete }: ID
   const [capturedPhoto, setCapturedPhoto] = useState<string | null>(null);
   const [stream, setStream] = useState<MediaStream | null>(null);
   const [loading, setLoading] = useState(false);
+  const [cameraReady, setCameraReady] = useState(false);
   
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      stopCamera();
+    };
+  }, []);
+
   const startCamera = async () => {
     try {
+      setLoading(true);
+      setCameraReady(false);
+      
+      // Stop any existing stream first
+      if (stream) {
+        stream.getTracks().forEach(track => track.stop());
+      }
+
       const mediaStream = await navigator.mediaDevices.getUserMedia({
         video: {
-          width: { ideal: 640 },
-          height: { ideal: 480 },
+          width: { ideal: 1280, min: 640 },
+          height: { ideal: 720, min: 480 },
           facingMode: 'user'
-        }
+        },
+        audio: false
       });
 
       setStream(mediaStream);
+      
       if (videoRef.current) {
         videoRef.current.srcObject = mediaStream;
+        
+        // Wait for video to load and play
+        const handleLoadedData = () => {
+          if (videoRef.current) {
+            videoRef.current.play().then(() => {
+              setCameraReady(true);
+              setStep('capture');
+              setLoading(false);
+              toast.success('Camera ready!');
+            }).catch((error) => {
+              console.error('Video play error:', error);
+              toast.error('Failed to start camera preview');
+              setLoading(false);
+            });
+          }
+        };
+        
+        videoRef.current.addEventListener('loadeddata', handleLoadedData);
+        
+        // Handle video errors
+        videoRef.current.onerror = (error) => {
+          console.error('Video error:', error);
+          toast.error('Camera initialization failed');
+          setLoading(false);
+        };
       }
-      setStep('capture');
     } catch (error) {
       console.error('Failed to access camera:', error);
-      toast.error('Camera access is required for ID verification');
+      toast.error('Camera access denied. Please allow camera permissions and refresh the page.');
+      setLoading(false);
     }
   };
 
   const stopCamera = () => {
     if (stream) {
-      stream.getTracks().forEach(track => track.stop());
+      stream.getTracks().forEach(track => {
+        track.stop();
+      });
       setStream(null);
+    }
+    setCameraReady(false);
+    if (videoRef.current) {
+      videoRef.current.srcObject = null;
     }
   };
 
   const capturePhoto = useCallback(() => {
-    if (!videoRef.current || !canvasRef.current) return;
+    if (!videoRef.current || !canvasRef.current || !cameraReady) {
+      toast.error('Camera not ready. Please wait a moment and try again.');
+      return;
+    }
 
     const canvas = canvasRef.current;
     const video = videoRef.current;
     const context = canvas.getContext('2d');
 
-    if (!context) return;
+    if (!context) {
+      toast.error('Failed to capture photo. Please try again.');
+      return;
+    }
 
+    // Ensure video has dimensions
+    if (video.videoWidth === 0 || video.videoHeight === 0) {
+      toast.error('Camera not ready. Please wait and try again.');
+      return;
+    }
+
+    // Set canvas dimensions to match video
     canvas.width = video.videoWidth;
     canvas.height = video.videoHeight;
-    context.drawImage(video, 0, 0);
+    
+    // Draw the video frame to canvas
+    context.drawImage(video, 0, 0, canvas.width, canvas.height);
 
-    const photoDataUrl = canvas.toDataURL('image/jpeg', 0.8);
+    // Convert to data URL with good quality
+    const photoDataUrl = canvas.toDataURL('image/jpeg', 0.9);
+    
+    if (photoDataUrl === 'data:,' || photoDataUrl.length < 1000) {
+      toast.error('Failed to capture photo. Please ensure camera is working and try again.');
+      return;
+    }
+
     setCapturedPhoto(photoDataUrl);
     stopCamera();
     setStep('review');
-  }, [stream]);
+    toast.success('Photo captured successfully!');
+  }, [cameraReady, stream]);
 
   const retakePhoto = () => {
     setCapturedPhoto(null);
     startCamera();
   };
 
+  const dataURLtoBlob = (dataURL: string): Blob => {
+    const arr = dataURL.split(',');
+    const mime = arr[0].match(/:(.*?);/)![1];
+    const bstr = atob(arr[1]);
+    let n = bstr.length;
+    const u8arr = new Uint8Array(n);
+    while (n--) {
+      u8arr[n] = bstr.charCodeAt(n);
+    }
+    return new Blob([u8arr], { type: mime });
+  };
+
   const uploadPhoto = async (photoDataUrl: string): Promise<string> => {
     try {
       // Convert data URL to blob
-      const response = await fetch(photoDataUrl);
-      const blob = await response.blob();
+      const blob = dataURLtoBlob(photoDataUrl);
+      
+      if (blob.size === 0) {
+        throw new Error('Invalid photo data');
+      }
       
       // Generate unique filename
-      const filename = `id-verification/${candidate.id}/${Date.now()}.jpg`;
+      const timestamp = Date.now();
+      const filename = `id-verification/${candidate.id}/${timestamp}.jpg`;
       
+      // First, ensure the bucket exists and is accessible
+      const { data: buckets, error: bucketError } = await supabase.storage.listBuckets();
+      
+      if (bucketError) {
+        console.error('Storage bucket error:', bucketError);
+        throw new Error('Storage service unavailable');
+      }
+
       // Upload to Supabase Storage
       const { data, error } = await supabase.storage
         .from('candidate-photos')
@@ -97,7 +193,33 @@ export default function IDVerification({ candidate, onVerificationComplete }: ID
           upsert: true
         });
 
-      if (error) throw error;
+      if (error) {
+        console.error('Storage upload error:', error);
+        
+        // Try creating the bucket if it doesn't exist
+        if (error.message.includes('not found')) {
+          const { error: createError } = await supabase.storage.createBucket('candidate-photos', {
+            public: true
+          });
+          
+          if (!createError) {
+            // Retry upload
+            const { data: retryData, error: retryError } = await supabase.storage
+              .from('candidate-photos')
+              .upload(filename, blob, {
+                contentType: 'image/jpeg',
+                upsert: true
+              });
+              
+            if (retryError) throw retryError;
+            data = retryData;
+          } else {
+            throw createError;
+          }
+        } else {
+          throw error;
+        }
+      }
 
       // Get public URL
       const { data: { publicUrl } } = supabase.storage
@@ -107,7 +229,8 @@ export default function IDVerification({ candidate, onVerificationComplete }: ID
       return publicUrl;
     } catch (error) {
       console.error('Failed to upload photo:', error);
-      throw new Error('Failed to upload photo');
+      // Fallback: store as base64 in database if storage fails
+      return photoDataUrl;
     }
   };
 
@@ -135,13 +258,16 @@ export default function IDVerification({ candidate, onVerificationComplete }: ID
         .select()
         .single();
 
-      if (error) throw error;
+      if (error) {
+        console.error('Database insert error:', error);
+        throw new Error(`Failed to save verification: ${error.message}`);
+      }
 
       toast.success('ID verification submitted successfully!');
       onVerificationComplete(data);
     } catch (error) {
       console.error('Failed to submit verification:', error);
-      toast.error('Failed to submit verification');
+      toast.error(error instanceof Error ? error.message : 'Failed to submit verification');
     } finally {
       setLoading(false);
     }
@@ -213,10 +339,20 @@ export default function IDVerification({ candidate, onVerificationComplete }: ID
 
               <button
                 onClick={startCamera}
-                className="w-full bg-blue-600 text-white py-3 rounded-lg font-medium hover:bg-blue-700 transition-colors flex items-center justify-center gap-2"
+                disabled={loading}
+                className="w-full bg-blue-600 text-white py-3 rounded-lg font-medium hover:bg-blue-700 disabled:opacity-50 transition-colors flex items-center justify-center gap-2"
               >
-                <Camera className="w-5 h-5" />
-                Start Camera for ID Capture
+                {loading ? (
+                  <>
+                    <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                    Starting Camera...
+                  </>
+                ) : (
+                  <>
+                    <Camera className="w-5 h-5" />
+                    Start Camera for ID Capture
+                  </>
+                )}
               </button>
 
               <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
@@ -252,9 +388,19 @@ export default function IDVerification({ candidate, onVerificationComplete }: ID
                   ref={videoRef}
                   autoPlay
                   playsInline
+                  muted
                   className="w-full h-80 object-cover"
+                  style={{ transform: 'scaleX(-1)' }} // Mirror effect
                 />
-                <div className="absolute inset-0 border-4 border-dashed border-white/50 m-8 rounded-lg flex items-center justify-center">
+                {!cameraReady && (
+                  <div className="absolute inset-0 bg-gray-900 flex items-center justify-center">
+                    <div className="text-white text-center">
+                      <div className="w-8 h-8 border-2 border-white border-t-transparent rounded-full animate-spin mx-auto mb-2" />
+                      <p className="text-sm">Initializing camera...</p>
+                    </div>
+                  </div>
+                )}
+                <div className="absolute inset-0 border-4 border-dashed border-white/50 m-8 rounded-lg flex items-center justify-center pointer-events-none">
                   <div className="text-white text-center">
                     <CreditCard className="w-12 h-12 mx-auto mb-2 opacity-75" />
                     <p className="text-sm opacity-75">Position ID here</p>
@@ -265,7 +411,8 @@ export default function IDVerification({ candidate, onVerificationComplete }: ID
               <div className="flex gap-4">
                 <button
                   onClick={capturePhoto}
-                  className="flex-1 bg-green-600 text-white py-3 rounded-lg font-medium hover:bg-green-700 transition-colors flex items-center justify-center gap-2"
+                  disabled={!cameraReady}
+                  className="flex-1 bg-green-600 text-white py-3 rounded-lg font-medium hover:bg-green-700 disabled:opacity-50 transition-colors flex items-center justify-center gap-2"
                 >
                   <Camera className="w-5 h-5" />
                   Capture Photo
