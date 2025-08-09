@@ -1,5 +1,6 @@
 import { supabase } from './supabase';
 import bcrypt from 'bcryptjs';
+import toast from 'react-hot-toast';
 
 // -----------------------
 // Admin Authentication
