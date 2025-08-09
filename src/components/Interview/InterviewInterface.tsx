@@ -11,7 +11,8 @@ import {
   ArrowLeft,
   ArrowRight,
   Eye,
-  EyeOff
+  EyeOff,
+  Shield
 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { executeCode } from '../../lib/codeExecution';
@@ -39,6 +40,7 @@ export default function InterviewInterface({ candidate, domain, examCode, onComp
   const [violations, setViolations] = useState<string[]>([]);
   const [executionResult, setExecutionResult] = useState<any>(null);
   const [executing, setExecuting] = useState(false);
+  const [proctoringActive, setProctoringActive] = useState(false);
   
   const timerRef = useRef<NodeJS.Timeout | null>(null);
   const autoSubmitRef = useRef<boolean>(false);
@@ -58,20 +60,17 @@ export default function InterviewInterface({ candidate, domain, examCode, onComp
   }, [timeRemaining]);
 
   useEffect(() => {
-    if (violations.length >= 3 && !autoSubmitRef.current) {
+    if (violations.length >= 3 && !autoSubmitRef.current && proctoringActive) {
       autoSubmitRef.current = true;
       handleAutoSubmit('violation_limit');
     }
-  }, [violations]);
+  }, [violations, proctoringActive]);
 
   const cleanup = () => {
     if (timerRef.current) {
       clearInterval(timerRef.current);
     }
-    // Exit fullscreen
-    if (document.fullscreenElement) {
-      document.exitFullscreen().catch(console.error);
-    }
+    setProctoringActive(false);
   };
 
   const initializeInterview = async () => {
@@ -114,14 +113,20 @@ export default function InterviewInterface({ candidate, domain, examCode, onComp
 
       setInterview(interviewData);
       setTimeRemaining(3600); // 1 hour
-      startTimer();
       setLoading(false);
 
-      toast.success('Interview started! Good luck!');
+      // Don't start timer or proctoring yet - wait for user to click start
+      toast.success('Interview loaded! Click "Start Test" to begin.');
     } catch (error) {
       console.error('Failed to initialize interview:', error);
       toast.error('Failed to start interview');
     }
+  };
+
+  const startExam = () => {
+    startTimer();
+    setProctoringActive(true);
+    toast.success('Exam started! Good luck!');
   };
 
   const startTimer = () => {
@@ -218,6 +223,7 @@ export default function InterviewInterface({ candidate, domain, examCode, onComp
     if (submitting) return;
     
     setSubmitting(true);
+    setProctoringActive(false); // Stop proctoring immediately
     
     try {
       cleanup(); // Stop timer and exit fullscreen
@@ -334,7 +340,7 @@ export default function InterviewInterface({ candidate, domain, examCode, onComp
       {/* Proctoring System */}
       <ProctoringSystem 
         onViolation={handleViolation}
-        isActive={!submitting}
+        isActive={proctoringActive && !submitting}
       />
 
       {/* Header */}
@@ -351,8 +357,18 @@ export default function InterviewInterface({ candidate, domain, examCode, onComp
             </div>
             
             <div className="flex items-center gap-6">
+              {!proctoringActive && (
+                <button
+                  onClick={startExam}
+                  className="bg-green-600 text-white px-6 py-2 rounded-lg hover:bg-green-700 transition-colors flex items-center gap-2 font-medium"
+                >
+                  <Shield className="w-4 h-4" />
+                  Start Test
+                </button>
+              )}
+              
               {/* Violation Warning */}
-              {violations.length > 0 && (
+              {violations.length > 0 && proctoringActive && (
                 <div className={`flex items-center gap-2 px-3 py-1 rounded-full text-sm font-medium ${
                   violations.length >= 2 
                     ? 'bg-red-100 text-red-800' 
@@ -364,7 +380,7 @@ export default function InterviewInterface({ candidate, domain, examCode, onComp
               )}
               
               {/* Timer */}
-              <div className={`flex items-center gap-2 font-mono text-lg font-bold ${getTimeColor()}`}>
+              <div className={`flex items-center gap-2 font-mono text-lg font-bold ${proctoringActive ? getTimeColor() : 'text-gray-400'}`}>
                 <Clock className="w-5 h-5" />
                 {formatTime(timeRemaining)}
               </div>
@@ -372,7 +388,7 @@ export default function InterviewInterface({ candidate, domain, examCode, onComp
               {/* Submit Button */}
               <button
                 onClick={() => submitInterview(false)}
-                disabled={submitting}
+                disabled={submitting || !proctoringActive}
                 className="bg-green-600 text-white px-6 py-2 rounded-lg hover:bg-green-700 disabled:opacity-50 transition-colors flex items-center gap-2"
               >
                 {submitting ? (
@@ -393,6 +409,22 @@ export default function InterviewInterface({ candidate, domain, examCode, onComp
       </header>
 
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
+        {!proctoringActive && (
+          <div className="mb-6 bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200 rounded-2xl p-6">
+            <div className="flex items-center gap-4">
+              <div className="p-3 bg-blue-100 rounded-xl">
+                <Shield className="w-6 h-6 text-blue-600" />
+              </div>
+              <div>
+                <h3 className="font-semibold text-blue-900 mb-1">Ready to Begin?</h3>
+                <p className="text-blue-800 text-sm">
+                  Click "Start Test" to begin your proctored exam. Make sure you're in a quiet environment with good lighting.
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
+        
         <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
           {/* Question Navigation */}
           <div className="lg:col-span-1">
@@ -403,7 +435,11 @@ export default function InterviewInterface({ candidate, domain, examCode, onComp
                   <button
                     key={question.id}
                     onClick={() => setCurrentQuestionIndex(index)}
+                    disabled={!proctoringActive}
                     className={`w-full text-left p-3 rounded-lg transition-colors ${
+                      !proctoringActive
+                        ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
+                        :
                       index === currentQuestionIndex
                         ? 'bg-blue-100 text-blue-700 border border-blue-200'
                         : answers[question.id]
@@ -486,6 +522,7 @@ export default function InterviewInterface({ candidate, domain, examCode, onComp
                           value={option}
                           checked={currentAnswer.text === option}
                           onChange={(e) => handleAnswerChange(currentQuestion.id, { text: e.target.value })}
+                          disabled={!proctoringActive}
                           className="w-4 h-4 text-blue-600"
                         />
                         <span className="text-gray-900">{option}</span>
@@ -498,6 +535,7 @@ export default function InterviewInterface({ candidate, domain, examCode, onComp
                   <textarea
                     value={currentAnswer.text || ''}
                     onChange={(e) => handleAnswerChange(currentQuestion.id, { text: e.target.value })}
+                    disabled={!proctoringActive}
                     className="w-full h-40 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none"
                     placeholder="Type your answer here..."
                   />
@@ -513,7 +551,7 @@ export default function InterviewInterface({ candidate, domain, examCode, onComp
                         </span>
                         <button
                           onClick={executeCurrentCode}
-                          disabled={executing || !currentAnswer.code}
+                         disabled={executing || !currentAnswer.code || !proctoringActive}
                           className="flex items-center gap-2 px-3 py-1 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50 text-sm"
                         >
                           {executing ? (
@@ -532,15 +570,16 @@ export default function InterviewInterface({ candidate, domain, examCode, onComp
                         language={currentQuestion.language}
                         value={currentAnswer.code || currentQuestion.starter_code || ''}
                         onChange={(value) => handleAnswerChange(currentQuestion.id, { code: value || '' })}
-                        theme="vs-dark"
                         options={{
                           minimap: { enabled: false },
                           fontSize: 14,
                           lineNumbers: 'on',
                           scrollBeyondLastLine: false,
                           automaticLayout: true,
-                          wordWrap: 'on'
+                          wordWrap: 'on',
+                          readOnly: !proctoringActive
                         }}
+                        theme="vs-dark"
                       />
                     </div>
 
@@ -566,7 +605,7 @@ export default function InterviewInterface({ candidate, domain, examCode, onComp
               <div className="p-6 border-t border-gray-200 flex justify-between">
                 <button
                   onClick={() => setCurrentQuestionIndex(Math.max(0, currentQuestionIndex - 1))}
-                  disabled={currentQuestionIndex === 0}
+                  disabled={currentQuestionIndex === 0 || !proctoringActive}
                   className="flex items-center gap-2 px-4 py-2 text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-lg disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                 >
                   <ArrowLeft className="w-4 h-4" />
@@ -575,7 +614,7 @@ export default function InterviewInterface({ candidate, domain, examCode, onComp
                 
                 <button
                   onClick={() => setCurrentQuestionIndex(Math.min(questions.length - 1, currentQuestionIndex + 1))}
-                  disabled={currentQuestionIndex === questions.length - 1}
+                  disabled={currentQuestionIndex === questions.length - 1 || !proctoringActive}
                   className="flex items-center gap-2 px-4 py-2 text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-lg disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                 >
                   Next

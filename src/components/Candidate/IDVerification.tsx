@@ -8,16 +8,17 @@ import {
   User,
   CreditCard,
   FileText,
-  X
+  X,
+  Shield
 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import toast from 'react-hot-toast';
- 
+
 interface IDVerificationProps {
   candidate: any;
   onVerificationComplete: (verificationData: any) => void;
 }
- 
+
 export default function IDVerification({ candidate, onVerificationComplete }: IDVerificationProps) {
   const [step, setStep] = useState<'select' | 'capture' | 'review'>('select');
   const [verificationType, setVerificationType] = useState<'aadhar' | 'pan' | 'other'>('aadhar');
@@ -26,11 +27,10 @@ export default function IDVerification({ candidate, onVerificationComplete }: ID
   const [loading, setLoading] = useState(false);
   const [cameraActive, setCameraActive] = useState(false);
   const [cameraError, setCameraError] = useState<string | null>(null);
- 
+
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
- 
-  // Start camera immediately when component mounts for select step
+
   useEffect(() => {
     if (step === 'capture') {
       startCamera();
@@ -39,13 +39,12 @@ export default function IDVerification({ candidate, onVerificationComplete }: ID
       stopCamera();
     };
   }, [step]);
- 
+
   const startCamera = async () => {
     try {
       setLoading(true);
       setCameraError(null);
-      console.log('Starting camera...');
-     
+      
       const stream = await navigator.mediaDevices.getUserMedia({
         video: {
           width: { ideal: 1280 },
@@ -54,23 +53,35 @@ export default function IDVerification({ candidate, onVerificationComplete }: ID
         },
         audio: false
       });
- 
-      console.log('Stream obtained:', stream);
+
       streamRef.current = stream;
- 
+
       if (videoRef.current) {
-        console.log('Setting video source...');
         videoRef.current.srcObject = stream;
-        await videoRef.current.play();
-        setCameraActive(true);
-        setLoading(false);
-        toast.success('Camera ready!');
+        
+        // Wait for video to be ready
+        await new Promise((resolve) => {
+          if (videoRef.current) {
+            videoRef.current.onloadedmetadata = () => {
+              videoRef.current?.play().then(() => {
+                setCameraActive(true);
+                setLoading(false);
+                toast.success('Camera ready! Position your ID clearly in the frame.');
+                resolve(true);
+              }).catch((error) => {
+                console.error('Video play error:', error);
+                setLoading(false);
+                setCameraError('Failed to start video playback');
+              });
+            };
+          }
+        });
       }
     } catch (error: any) {
       console.error('Camera error:', error);
       setLoading(false);
       setCameraError(error.message);
-     
+      
       if (error.name === 'NotAllowedError') {
         toast.error('Camera permission denied. Please allow camera access and refresh.');
       } else if (error.name === 'NotFoundError') {
@@ -80,7 +91,7 @@ export default function IDVerification({ candidate, onVerificationComplete }: ID
       }
     }
   };
- 
+
   const stopCamera = () => {
     if (streamRef.current) {
       streamRef.current.getTracks().forEach(track => track.stop());
@@ -90,83 +101,133 @@ export default function IDVerification({ candidate, onVerificationComplete }: ID
       videoRef.current.srcObject = null;
     }
     setCameraActive(false);
-    setIsRecording(false);
   };
- 
+
   const capturePhoto = () => {
-    if (!videoRef.current) {
+    if (!videoRef.current || !cameraActive) {
       toast.error('Camera not ready');
       return;
     }
- 
+
     const canvas = document.createElement('canvas');
     const video = videoRef.current;
-   
+    
+    // Ensure video has dimensions
     const width = video.videoWidth || 1280;
     const height = video.videoHeight || 720;
-   
+    
+    if (width === 0 || height === 0) {
+      toast.error('Video not ready. Please wait a moment and try again.');
+      return;
+    }
+    
     canvas.width = width;
     canvas.height = height;
-   
+    
     const ctx = canvas.getContext('2d');
     if (ctx) {
+      // Draw the video frame to canvas
       ctx.drawImage(video, 0, 0, width, height);
-      const dataUrl = canvas.toDataURL('image/jpeg', 0.9);
-     
-      if (dataUrl && dataUrl.length > 100) {
-        setCapturedPhoto(dataUrl);
-        stopCamera();
-        setStep('review');
-        toast.success('Photo captured!');
-      } else {
-        toast.error('Failed to capture photo. Please try again.');
-      }
+      
+      // Convert to blob with high quality
+      canvas.toBlob((blob) => {
+        if (blob && blob.size > 0) {
+          const reader = new FileReader();
+          reader.onload = () => {
+            const dataUrl = reader.result as string;
+            setCapturedPhoto(dataUrl);
+            stopCamera();
+            setStep('review');
+            toast.success('Photo captured successfully!');
+          };
+          reader.readAsDataURL(blob);
+        } else {
+          toast.error('Failed to capture photo. Please try again.');
+        }
+      }, 'image/jpeg', 0.9);
     }
   };
- 
+
   const retakePhoto = () => {
     setCapturedPhoto(null);
-    setStep('select');
+    setStep('capture');
   };
- 
+
   const handleSkipVerification = () => {
     stopCamera();
-    toast.info('Skipping verification');
+    toast.info('Skipping verification for demo');
     onVerificationComplete({
       candidate_id: candidate.id,
       verification_type: 'skipped',
       verification_status: 'skipped'
     });
   };
- 
+
   const submitVerification = async () => {
     if (!capturedPhoto) {
       toast.error('Please capture a photo first');
       return;
     }
- 
+
     setLoading(true);
     try {
-      const verificationData = {
-        id: Date.now(),
-        candidate_id: candidate.id,
-        verification_type: verificationType,
-        id_number: idNumber || null,
-        photo_url: 'photo_captured',
-        verification_status: 'verified',
-        created_at: new Date().toISOString()
-      };
- 
-      toast.success('ID verification completed!');
+      // Convert data URL to blob
+      const response = await fetch(capturedPhoto);
+      const blob = await response.blob();
+      
+      if (blob.size === 0) {
+        throw new Error('Invalid image data');
+      }
+
+      // Create a unique filename
+      const fileName = `verification_${candidate.id}_${Date.now()}.jpg`;
+      
+      // Upload to Supabase Storage
+      const { data: uploadData, error: uploadError } = await supabase.storage
+        .from('verification-photos')
+        .upload(fileName, blob, {
+          contentType: 'image/jpeg',
+          upsert: false
+        });
+
+      if (uploadError) {
+        console.error('Upload error:', uploadError);
+        throw new Error('Failed to upload photo');
+      }
+
+      // Get public URL
+      const { data: urlData } = supabase.storage
+        .from('verification-photos')
+        .getPublicUrl(fileName);
+
+      // Store verification record in database
+      const { data: verificationData, error: dbError } = await supabase
+        .from('candidate_verifications')
+        .insert({
+          candidate_id: candidate.id,
+          verification_type: verificationType,
+          id_number: idNumber || null,
+          photo_url: urlData.publicUrl,
+          verification_status: 'approved' // Auto-approve since admin review is not needed
+        })
+        .select()
+        .single();
+
+      if (dbError) {
+        console.error('Database error:', dbError);
+        throw new Error('Failed to save verification');
+      }
+
+      toast.success('ID verification completed successfully!');
       onVerificationComplete(verificationData);
     } catch (error) {
       console.error('Verification error:', error);
-      toast.error('Failed to submit verification');
+      toast.error('Failed to submit verification. Please try again.');
     } finally {
       setLoading(false);
     }
   };
- 
+
   const getVerificationIcon = (type: string) => {
     switch (type) {
       case 'aadhar': return <CreditCard className="w-6 h-6" />;
@@ -174,108 +235,100 @@ export default function IDVerification({ candidate, onVerificationComplete }: ID
       default: return <User className="w-6 h-6" />;
     }
   };
- 
-  const [isRecording, setIsRecording] = useState(false);
- 
+
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center p-4">
+    <div className="min-h-screen bg-gradient-to-br from-indigo-50 via-blue-50 to-cyan-50 flex items-center justify-center p-4">
       <div className="max-w-2xl w-full">
-        <div className="bg-white rounded-2xl shadow-xl p-8">
-          {/* Debug Info */}
-          <div className="bg-gray-100 p-4 rounded mb-4 text-sm">
-            <p>Camera Status: {isRecording ? '✅ Active' : '❌ Inactive'}</p>
-            <p>Video Element: {videoRef.current ? '✅ Ready' : '❌ Not Ready'}</p>
-            <p>Stream: {streamRef.current ? '✅ Connected' : '❌ Not Connected'}</p>
-            <p>Current Step: {step}</p>
-          </div>
- 
+        <div className="bg-white/80 backdrop-blur-sm rounded-3xl shadow-2xl border border-white/20 p-8">
           {/* Header */}
           {step === 'select' && (
             <div className="text-center mb-8">
-              <div className="bg-blue-100 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4">
-                <Camera className="w-8 h-8 text-blue-600" />
+              <div className="bg-gradient-to-r from-blue-500 to-indigo-600 w-20 h-20 rounded-full flex items-center justify-center mx-auto mb-6 shadow-lg">
+                <Shield className="w-10 h-10 text-white" />
               </div>
-              <h1 className="text-2xl font-bold text-gray-900">ID Verification Required</h1>
-              <p className="text-gray-600 mt-2">
+              <h1 className="text-3xl font-bold bg-gradient-to-r from-gray-900 to-gray-700 bg-clip-text text-transparent mb-3">
+                Identity Verification
+              </h1>
+              <p className="text-gray-600 text-lg">
                 Please verify your identity before proceeding to the interview
               </p>
-             
+              
               <button
                 onClick={handleSkipVerification}
-                className="mt-4 text-sm text-blue-600 hover:text-blue-700 underline"
+                className="mt-4 text-sm text-blue-600 hover:text-blue-700 underline transition-colors"
               >
-                Skip verification (Testing only)
+                Skip verification (Demo mode)
               </button>
             </div>
           )}
- 
+
           {/* Step: Select ID Type */}
           {step === 'select' && (
-            <div className="space-y-6">
+            <div className="space-y-8">
               <div>
-                <h3 className="text-lg font-medium text-gray-900 mb-4">Select ID Type</h3>
+                <h3 className="text-xl font-semibold text-gray-900 mb-6">Select ID Document Type</h3>
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                   {[
-                    { type: 'aadhar', label: 'Aadhar Card', description: 'Government issued ID' },
-                    { type: 'pan', label: 'PAN Card', description: 'Tax identification' },
-                    { type: 'other', label: 'Other ID', description: 'Any government ID' }
+                    { type: 'aadhar', label: 'Aadhar Card', description: 'Government issued ID', color: 'from-blue-500 to-blue-600' },
+                    { type: 'pan', label: 'PAN Card', description: 'Tax identification', color: 'from-green-500 to-green-600' },
+                    { type: 'other', label: 'Other ID', description: 'Any government ID', color: 'from-purple-500 to-purple-600' }
                   ].map((option) => (
                     <button
                       key={option.type}
                       onClick={() => setVerificationType(option.type as any)}
-                      className={`p-4 border-2 rounded-xl transition-colors text-left ${
+                      className={`p-6 border-2 rounded-2xl transition-all duration-300 text-left transform hover:scale-105 ${
                         verificationType === option.type
-                          ? 'border-blue-500 bg-blue-50'
-                          : 'border-gray-300 hover:border-gray-400'
+                          ? 'border-blue-500 bg-gradient-to-br from-blue-50 to-indigo-50 shadow-lg'
+                          : 'border-gray-200 hover:border-gray-300 hover:shadow-md'
                       }`}
                     >
-                      <div className="flex items-center gap-3 mb-2">
+                      <div className={`w-12 h-12 rounded-xl bg-gradient-to-r ${option.color} flex items-center justify-center mb-4`}>
                         {getVerificationIcon(option.type)}
-                        <span className="font-medium text-gray-900">{option.label}</span>
                       </div>
+                      <h4 className="font-semibold text-gray-900 mb-2">{option.label}</h4>
                       <p className="text-sm text-gray-600">{option.description}</p>
                     </button>
                   ))}
                 </div>
               </div>
- 
+
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
+                <label className="block text-sm font-medium text-gray-700 mb-3">
                   ID Number (Optional)
                 </label>
                 <input
                   type="text"
                   value={idNumber}
                   onChange={(e) => setIdNumber(e.target.value)}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  className="w-full px-4 py-3 border border-gray-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-200"
                   placeholder={`Enter your ${verificationType.toUpperCase()} number`}
                 />
               </div>
- 
+
               <button
                 onClick={() => setStep('capture')}
                 disabled={loading}
-                className="w-full bg-blue-600 text-white py-3 rounded-lg font-medium hover:bg-blue-700 disabled:opacity-50 transition-colors flex items-center justify-center gap-2"
+                className="w-full bg-gradient-to-r from-blue-600 to-indigo-600 text-white py-4 rounded-xl font-semibold text-lg hover:from-blue-700 hover:to-indigo-700 disabled:opacity-50 transition-all duration-200 flex items-center justify-center gap-3 shadow-lg"
               >
                 {loading ? (
                   <>
-                    <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                    <div className="w-6 h-6 border-2 border-white border-t-transparent rounded-full animate-spin" />
                     Starting Camera...
                   </>
                 ) : (
                   <>
-                    <Camera className="w-5 h-5" />
+                    <Camera className="w-6 h-6" />
                     Start Camera for ID Capture
                   </>
                 )}
               </button>
- 
-              <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
-                <div className="flex items-start gap-3">
-                  <AlertCircle className="w-5 h-5 text-yellow-600 mt-0.5 flex-shrink-0" />
+
+              <div className="bg-gradient-to-r from-amber-50 to-orange-50 border border-amber-200 rounded-2xl p-6">
+                <div className="flex items-start gap-4">
+                  <AlertCircle className="w-6 h-6 text-amber-600 mt-0.5 flex-shrink-0" />
                   <div>
-                    <h4 className="font-medium text-yellow-900 mb-1">Instructions</h4>
-                    <ul className="text-sm text-yellow-800 space-y-1">
+                    <h4 className="font-semibold text-amber-900 mb-2">Capture Instructions</h4>
+                    <ul className="text-sm text-amber-800 space-y-2">
                       <li>• Hold your ID document clearly in front of the camera</li>
                       <li>• Ensure good lighting and all text is readable</li>
                       <li>• Your face should be visible alongside the ID</li>
@@ -286,18 +339,18 @@ export default function IDVerification({ candidate, onVerificationComplete }: ID
               </div>
             </div>
           )}
- 
+
           {/* Step: Capture */}
           {step === 'capture' && (
             <div>
               <div className="text-center mb-6">
-                <h2 className="text-2xl font-bold text-gray-900">Position Your ID Document</h2>
-                <p className="text-gray-600 mt-2">
+                <h2 className="text-2xl font-bold text-gray-900 mb-2">Position Your ID Document</h2>
+                <p className="text-gray-600">
                   Hold your {verificationType.toUpperCase()} clearly in front of the camera
                 </p>
               </div>
- 
-              <div className="relative bg-black rounded-lg overflow-hidden mb-6" style={{ minHeight: '400px' }}>
+
+              <div className="relative bg-gray-900 rounded-2xl overflow-hidden mb-6 shadow-2xl" style={{ minHeight: '400px' }}>
                 <video
                   ref={videoRef}
                   autoPlay
@@ -309,31 +362,30 @@ export default function IDVerification({ candidate, onVerificationComplete }: ID
                     minHeight: '400px',
                     display: 'block'
                   }}
-                  onLoadedMetadata={() => console.log('Video metadata loaded')}
-                  onPlay={() => {
-                    console.log('Video playing');
-                    setIsRecording(true);
-                  }}
-                  onError={(e) => console.error('Video error:', e)}
                 />
                 {!cameraActive && (
                   <div className="absolute inset-0 flex items-center justify-center bg-gray-900">
                     <div className="text-white text-center">
-                      <div className="w-8 h-8 border-2 border-white border-t-transparent rounded-full animate-spin mx-auto mb-2" />
-                      <p>Initializing camera...</p>
+                      <div className="w-12 h-12 border-4 border-white border-t-transparent rounded-full animate-spin mx-auto mb-4" />
+                      <p className="text-lg">Initializing camera...</p>
                     </div>
                   </div>
                 )}
-                <div className="absolute inset-0 border-4 border-dashed border-white/30 m-8 rounded-lg pointer-events-none" />
+                <div className="absolute inset-0 border-4 border-dashed border-white/40 m-8 rounded-2xl pointer-events-none" />
+                
+                {/* Camera overlay guide */}
+                <div className="absolute top-4 left-4 right-4 bg-black/50 text-white p-3 rounded-xl">
+                  <p className="text-sm text-center">Position your ID document within the dashed frame</p>
+                </div>
               </div>
- 
+
               <div className="flex gap-4">
                 <button
                   onClick={capturePhoto}
                   disabled={!cameraActive}
-                  className="flex-1 bg-green-600 text-white py-3 rounded-lg font-medium hover:bg-green-700 disabled:opacity-50 transition-colors flex items-center justify-center gap-2"
+                  className="flex-1 bg-gradient-to-r from-green-600 to-emerald-600 text-white py-4 rounded-xl font-semibold hover:from-green-700 hover:to-emerald-700 disabled:opacity-50 transition-all duration-200 flex items-center justify-center gap-3 shadow-lg"
                 >
-                  <Camera className="w-5 h-5" />
+                  <Camera className="w-6 h-6" />
                   Capture Photo
                 </button>
                 <button
@@ -341,68 +393,69 @@ export default function IDVerification({ candidate, onVerificationComplete }: ID
                     stopCamera();
                     setStep('select');
                   }}
-                  className="px-6 py-3 bg-gray-200 text-gray-700 rounded-lg font-medium hover:bg-gray-300 transition-colors flex items-center justify-center gap-2"
+                  className="px-6 py-4 bg-gray-200 text-gray-700 rounded-xl font-semibold hover:bg-gray-300 transition-all duration-200 flex items-center justify-center gap-2"
                 >
                   <X className="w-5 h-5" />
                   Cancel
                 </button>
-                <button
-                  onClick={startCamera}
-                  className="px-6 py-3 bg-green-600 text-white rounded-lg font-medium hover:bg-green-700 transition-colors flex items-center justify-center gap-2"
-                >
-                  <RefreshCw className="w-5 h-5" />
-                  Restart Camera
-                </button>
               </div>
             </div>
           )}
- 
+
           {/* Step: Review */}
           {step === 'review' && capturedPhoto && (
             <div>
               <div className="text-center mb-6">
-                <h2 className="text-2xl font-bold text-gray-900">Review Your Photo</h2>
-                <p className="text-gray-600 mt-2">Make sure the ID is clearly visible</p>
+                <h2 className="text-2xl font-bold text-gray-900 mb-2">Review Your Photo</h2>
+                <p className="text-gray-600">Make sure the ID is clearly visible and readable</p>
               </div>
- 
-              <div className="bg-gray-100 rounded-lg p-4 mb-6">
+
+              <div className="bg-gray-100 rounded-2xl p-4 mb-6 shadow-inner">
                 <img
                   src={capturedPhoto}
                   alt="Captured ID"
-                  className="w-full h-auto max-h-96 object-contain rounded"
+                  className="w-full h-auto max-h-96 object-contain rounded-xl shadow-lg"
                 />
               </div>
- 
-              <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-6">
-                <p className="text-sm text-blue-800">
-                  <strong>ID Type:</strong> {verificationType.toUpperCase()}
-                  {idNumber && <><br /><strong>ID Number:</strong> {idNumber}</>}
-                </p>
+
+              <div className="bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200 rounded-2xl p-6 mb-6">
+                <div className="grid grid-cols-2 gap-4 text-sm">
+                  <div>
+                    <span className="text-gray-600">ID Type:</span>
+                    <span className="font-semibold text-gray-900 ml-2">{verificationType.toUpperCase()}</span>
+                  </div>
+                  {idNumber && (
+                    <div>
+                      <span className="text-gray-600">ID Number:</span>
+                      <span className="font-semibold text-gray-900 ml-2">{idNumber}</span>
+                    </div>
+                  )}
+                </div>
               </div>
- 
+
               <div className="flex gap-4">
                 <button
                   onClick={submitVerification}
                   disabled={loading}
-                  className="flex-1 bg-blue-600 text-white py-3 rounded-lg font-medium hover:bg-blue-700 disabled:opacity-50 transition-colors flex items-center justify-center gap-2"
+                  className="flex-1 bg-gradient-to-r from-blue-600 to-indigo-600 text-white py-4 rounded-xl font-semibold hover:from-blue-700 hover:to-indigo-700 disabled:opacity-50 transition-all duration-200 flex items-center justify-center gap-3 shadow-lg"
                 >
                   {loading ? (
                     <>
-                      <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                      <div className="w-6 h-6 border-2 border-white border-t-transparent rounded-full animate-spin" />
                       Submitting...
                     </>
                   ) : (
                     <>
-                      <CheckCircle className="w-5 h-5" />
+                      <CheckCircle className="w-6 h-6" />
                       Submit Verification
                     </>
                   )}
                 </button>
                 <button
                   onClick={retakePhoto}
-                  className="px-6 py-3 bg-gray-200 text-gray-700 rounded-lg font-medium hover:bg-gray-300 transition-colors"
+                  className="px-6 py-4 bg-gray-200 text-gray-700 rounded-xl font-semibold hover:bg-gray-300 transition-all duration-200 flex items-center gap-2"
                 >
-                  <RefreshCw className="w-4 h-4 inline mr-2" />
+                  <RefreshCw className="w-5 h-5" />
                   Retake
                 </button>
               </div>
@@ -413,4 +466,3 @@ export default function IDVerification({ candidate, onVerificationComplete }: ID
     </div>
   );
 }
- 

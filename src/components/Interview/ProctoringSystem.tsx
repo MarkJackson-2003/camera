@@ -7,7 +7,8 @@ import {
   AlertTriangle,
   Eye,
   EyeOff,
-  Maximize
+  Maximize,
+  Shield
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 
@@ -23,20 +24,27 @@ export default function ProctoringSystem({ onViolation, isActive }: ProctoringSy
   const [violations, setViolations] = useState<string[]>([]);
   const [stream, setStream] = useState<MediaStream | null>(null);
   const [isRecording, setIsRecording] = useState(false);
+  const [isInitialized, setIsInitialized] = useState(false);
   
   const videoRef = useRef<HTMLVideoElement>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const recordedChunksRef = useRef<Blob[]>([]);
+  const fullscreenInitializedRef = useRef(false);
 
   useEffect(() => {
-    if (isActive) {
+    if (isActive && !isInitialized) {
       initializeProctoring();
-      setupEventListeners();
-    } else {
+      setIsInitialized(true);
+    } else if (!isActive && isInitialized) {
       cleanup();
+      setIsInitialized(false);
     }
 
-    return () => cleanup();
+    return () => {
+      if (!isActive) {
+        cleanup();
+      }
+    };
   }, [isActive]);
 
   const initializeProctoring = async () => {
@@ -65,6 +73,12 @@ export default function ProctoringSystem({ onViolation, isActive }: ProctoringSy
       // Enter full screen
       await enterFullScreen();
 
+      // Setup event listeners after fullscreen is entered
+      setTimeout(() => {
+        setupEventListeners();
+        fullscreenInitializedRef.current = true;
+      }, 1000);
+
       toast.success('Proctoring system activated');
     } catch (error) {
       console.error('Failed to initialize proctoring:', error);
@@ -92,7 +106,6 @@ export default function ProctoringSystem({ onViolation, isActive }: ProctoringSy
         const blob = new Blob(recordedChunksRef.current, {
           type: 'video/webm'
         });
-        // In production, upload this blob to your server
         console.log('Recording stopped, blob size:', blob.size);
       };
 
@@ -120,17 +133,21 @@ export default function ProctoringSystem({ onViolation, isActive }: ProctoringSy
       const isCurrentlyFullScreen = !!document.fullscreenElement;
       setIsFullScreen(isCurrentlyFullScreen);
       
-      if (!isCurrentlyFullScreen && isActive) {
+      // Only count as violation if proctoring was already initialized and this isn't the initial fullscreen entry
+      if (!isCurrentlyFullScreen && isActive && fullscreenInitializedRef.current) {
         onViolation('fullscreen_exit', 'Candidate exited fullscreen mode');
         toast.error('Please return to fullscreen mode');
         // Attempt to re-enter fullscreen
         setTimeout(enterFullScreen, 1000);
+      } else if (isCurrentlyFullScreen && !fullscreenInitializedRef.current) {
+        // This is the initial fullscreen entry, don't count as violation
+        fullscreenInitializedRef.current = true;
       }
     };
 
     // Tab visibility change detection
     const handleVisibilityChange = () => {
-      if (document.hidden && isActive) {
+      if (document.hidden && isActive && fullscreenInitializedRef.current) {
         onViolation('tab_switch', 'Candidate switched tabs or minimized window');
         toast.error('Tab switching detected! Please return to the exam.');
       }
@@ -138,7 +155,7 @@ export default function ProctoringSystem({ onViolation, isActive }: ProctoringSy
 
     // Prevent right-click context menu
     const handleContextMenu = (e: MouseEvent) => {
-      if (isActive) {
+      if (isActive && fullscreenInitializedRef.current) {
         e.preventDefault();
         onViolation('context_menu', 'Candidate attempted to open context menu');
       }
@@ -146,7 +163,7 @@ export default function ProctoringSystem({ onViolation, isActive }: ProctoringSy
 
     // Prevent keyboard shortcuts
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (isActive) {
+      if (isActive && fullscreenInitializedRef.current) {
         // Prevent common shortcuts
         const forbiddenKeys = [
           'F12', // Developer tools
@@ -224,9 +241,11 @@ export default function ProctoringSystem({ onViolation, isActive }: ProctoringSy
       document.exitFullscreen().catch(console.error);
     }
 
+    // Reset states
     setCameraEnabled(false);
     setMicrophoneEnabled(false);
     setIsFullScreen(false);
+    fullscreenInitializedRef.current = false;
   };
 
   const toggleCamera = async () => {
@@ -265,130 +284,138 @@ export default function ProctoringSystem({ onViolation, isActive }: ProctoringSy
 
   return (
     <div className="fixed top-4 right-4 z-50">
-      {/* Proctoring Panel */}
-      <div className="bg-white rounded-lg shadow-lg border border-gray-200 p-4 min-w-[300px]">
-        <div className="flex items-center justify-between mb-3">
-          <div className="flex items-center gap-2">
-            <Eye className="w-5 h-5 text-blue-600" />
-            <span className="font-medium text-gray-900">Exam Monitoring</span>
+      {/* Enhanced Proctoring Panel */}
+      <div className="bg-white/95 backdrop-blur-sm rounded-2xl shadow-2xl border border-gray-200/50 p-6 min-w-[320px]">
+        <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center gap-3">
+            <div className="p-2 bg-gradient-to-r from-blue-500 to-indigo-600 rounded-xl">
+              <Shield className="w-5 h-5 text-white" />
+            </div>
+            <div>
+              <span className="font-semibold text-gray-900">Exam Monitoring</span>
+              <div className="text-xs text-gray-500">Secure Testing Environment</div>
+            </div>
           </div>
-          <div className="flex items-center gap-1">
-            <div className={`w-2 h-2 rounded-full ${isRecording ? 'bg-red-500 animate-pulse' : 'bg-gray-400'}`} />
-            <span className="text-xs text-gray-500">
+          <div className="flex items-center gap-2">
+            <div className={`w-3 h-3 rounded-full ${isRecording ? 'bg-red-500 animate-pulse' : 'bg-gray-400'}`} />
+            <span className="text-xs font-medium text-gray-600">
               {isRecording ? 'Recording' : 'Inactive'}
             </span>
           </div>
         </div>
 
-        {/* Video Preview */}
-        <div className="relative mb-3">
+        {/* Enhanced Video Preview */}
+        <div className="relative mb-4">
           <video
             ref={videoRef}
             autoPlay
             muted
             playsInline
-            className="w-full h-32 bg-gray-900 rounded-lg object-cover"
+            className="w-full h-36 bg-gray-900 rounded-xl object-cover shadow-inner"
           />
           {!cameraEnabled && (
-            <div className="absolute inset-0 bg-gray-900 rounded-lg flex items-center justify-center">
+            <div className="absolute inset-0 bg-gray-900 rounded-xl flex items-center justify-center">
               <VideoOff className="w-8 h-8 text-gray-400" />
             </div>
           )}
+          <div className="absolute top-2 left-2 px-2 py-1 bg-black/50 text-white text-xs rounded-lg">
+            Live Feed
+          </div>
         </div>
 
-        {/* Controls */}
-        <div className="flex items-center justify-between mb-3">
-          <div className="flex items-center gap-2">
+        {/* Enhanced Controls */}
+        <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center gap-3">
             <button
               onClick={toggleCamera}
-              className={`p-2 rounded-lg transition-colors ${
+              className={`p-3 rounded-xl transition-all duration-200 ${
                 cameraEnabled 
-                  ? 'bg-green-100 text-green-700 hover:bg-green-200' 
-                  : 'bg-red-100 text-red-700 hover:bg-red-200'
+                  ? 'bg-green-100 text-green-700 hover:bg-green-200 shadow-sm' 
+                  : 'bg-red-100 text-red-700 hover:bg-red-200 shadow-sm'
               }`}
               title={cameraEnabled ? 'Disable Camera' : 'Enable Camera'}
             >
-              {cameraEnabled ? <Camera className="w-4 h-4" /> : <VideoOff className="w-4 h-4" />}
+              {cameraEnabled ? <Camera className="w-5 h-5" /> : <VideoOff className="w-5 h-5" />}
             </button>
             
             <button
               onClick={toggleMicrophone}
-              className={`p-2 rounded-lg transition-colors ${
+              className={`p-3 rounded-xl transition-all duration-200 ${
                 microphoneEnabled 
-                  ? 'bg-green-100 text-green-700 hover:bg-green-200' 
-                  : 'bg-red-100 text-red-700 hover:bg-red-200'
+                  ? 'bg-green-100 text-green-700 hover:bg-green-200 shadow-sm' 
+                  : 'bg-red-100 text-red-700 hover:bg-red-200 shadow-sm'
               }`}
               title={microphoneEnabled ? 'Disable Microphone' : 'Enable Microphone'}
             >
-              {microphoneEnabled ? <Mic className="w-4 h-4" /> : <MicOff className="w-4 h-4" />}
+              {microphoneEnabled ? <Mic className="w-5 h-5" /> : <MicOff className="w-5 h-5" />}
             </button>
           </div>
 
-          <div className="flex items-center gap-2">
-            <div className={`flex items-center gap-1 px-2 py-1 rounded-full text-xs ${
-              isFullScreen 
-                ? 'bg-green-100 text-green-800' 
-                : 'bg-red-100 text-red-800'
-            }`}>
-              <Maximize className="w-3 h-3" />
-              {isFullScreen ? 'Fullscreen' : 'Windowed'}
-            </div>
+          <div className={`flex items-center gap-2 px-3 py-2 rounded-xl text-sm font-medium ${
+            isFullScreen 
+              ? 'bg-green-100 text-green-800' 
+              : 'bg-red-100 text-red-800'
+          }`}>
+            <Maximize className="w-4 h-4" />
+            {isFullScreen ? 'Fullscreen' : 'Windowed'}
           </div>
         </div>
 
-        {/* Status Indicators */}
-        <div className="space-y-2">
+        {/* Enhanced Status Indicators */}
+        <div className="space-y-3">
           <div className="flex items-center justify-between text-sm">
-            <span className="text-gray-600">Camera:</span>
-            <span className={cameraEnabled ? 'text-green-600' : 'text-red-600'}>
+            <span className="text-gray-600 font-medium">Camera:</span>
+            <span className={`font-semibold ${cameraEnabled ? 'text-green-600' : 'text-red-600'}`}>
               {cameraEnabled ? 'Active' : 'Disabled'}
             </span>
           </div>
           <div className="flex items-center justify-between text-sm">
-            <span className="text-gray-600">Microphone:</span>
-            <span className={microphoneEnabled ? 'text-green-600' : 'text-red-600'}>
+            <span className="text-gray-600 font-medium">Microphone:</span>
+            <span className={`font-semibold ${microphoneEnabled ? 'text-green-600' : 'text-red-600'}`}>
               {microphoneEnabled ? 'Active' : 'Disabled'}
             </span>
           </div>
           <div className="flex items-center justify-between text-sm">
-            <span className="text-gray-600">Full Screen:</span>
-            <span className={isFullScreen ? 'text-green-600' : 'text-red-600'}>
+            <span className="text-gray-600 font-medium">Full Screen:</span>
+            <span className={`font-semibold ${isFullScreen ? 'text-green-600' : 'text-red-600'}`}>
               {isFullScreen ? 'Active' : 'Inactive'}
             </span>
           </div>
         </div>
 
-        {/* Violations Warning */}
+        {/* Enhanced Violations Warning */}
         {violations.length > 0 && (
-          <div className="mt-3 p-2 bg-red-50 border border-red-200 rounded-lg">
-            <div className="flex items-center gap-2 mb-1">
-              <AlertTriangle className="w-4 h-4 text-red-600" />
-              <span className="text-sm font-medium text-red-800">
+          <div className="mt-4 p-4 bg-gradient-to-r from-red-50 to-orange-50 border border-red-200 rounded-xl">
+            <div className="flex items-center gap-3 mb-2">
+              <AlertTriangle className="w-5 h-5 text-red-600" />
+              <span className="text-sm font-semibold text-red-800">
                 Violations Detected: {violations.length}
               </span>
             </div>
             <div className="text-xs text-red-700">
-              Your exam session is being monitored
+              Your exam session is being monitored for security
             </div>
           </div>
         )}
       </div>
 
-      {/* Warning Overlay for violations */}
-      {!isFullScreen && isActive && (
-        <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-40">
-          <div className="bg-white rounded-xl p-8 max-w-md text-center">
-            <AlertTriangle className="w-16 h-16 text-red-500 mx-auto mb-4" />
-            <h3 className="text-xl font-bold text-gray-900 mb-2">
+      {/* Enhanced Warning Overlay for violations */}
+      {!isFullScreen && isActive && fullscreenInitializedRef.current && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-40">
+          <div className="bg-white rounded-3xl p-10 max-w-md text-center shadow-2xl">
+            <div className="w-20 h-20 bg-gradient-to-r from-red-500 to-orange-500 rounded-full flex items-center justify-center mx-auto mb-6">
+              <AlertTriangle className="w-10 h-10 text-white" />
+            </div>
+            <h3 className="text-2xl font-bold text-gray-900 mb-3">
               Return to Full Screen
             </h3>
-            <p className="text-gray-600 mb-6">
-              You must remain in full screen mode during the exam. 
+            <p className="text-gray-600 mb-8 leading-relaxed">
+              You must remain in full screen mode during the exam for security purposes. 
               Click the button below to continue.
             </p>
             <button
               onClick={enterFullScreen}
-              className="bg-blue-600 text-white px-6 py-3 rounded-lg hover:bg-blue-700 transition-colors font-medium"
+              className="bg-gradient-to-r from-blue-600 to-indigo-600 text-white px-8 py-4 rounded-xl hover:from-blue-700 hover:to-indigo-700 transition-all duration-200 font-semibold text-lg shadow-lg"
             >
               Enter Full Screen
             </button>
