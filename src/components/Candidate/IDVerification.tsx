@@ -13,25 +13,38 @@ import {
 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import toast from 'react-hot-toast';
+import { User as SupabaseUser } from '@supabase/supabase-js';
 
 interface IDVerificationProps {
-  candidate: any;
-  onVerificationComplete: (verificationData: any) => void;
+  candidate: any; // Replace 'any' with a specific type if candidate structure is known
+  onVerificationComplete: (verificationData: any) => void; // Replace 'any' with a specific type if known
 }
 
 export default function IDVerification({ candidate, onVerificationComplete }: IDVerificationProps) {
   const [step, setStep] = useState<'select' | 'capture' | 'review'>('select');
   const [verificationType, setVerificationType] = useState<'aadhar' | 'pan' | 'other'>('aadhar');
-  const [idNumber, setIdNumber] = useState('');
+  const [idNumber, setIdNumber] = useState<string>('');
   const [capturedPhoto, setCapturedPhoto] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [cameraActive, setCameraActive] = useState(false);
+  const [loading, setLoading] = useState<boolean>(false);
+  const [cameraActive, setCameraActive] = useState<boolean>(false);
   const [cameraError, setCameraError] = useState<string | null>(null);
+  const [user, setUser] = useState<SupabaseUser | null>(null);
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
 
   useEffect(() => {
+    const checkAuth = async () => {
+      const { data: { user }, error } = await supabase.auth.getUser();
+      if (!user && !error) {
+        toast.error('Please log in to verify your identity.');
+        // Optionally redirect to login: window.location.href = '/login';
+      } else {
+        setUser(user || null);
+      }
+    };
+    checkAuth();
+
     if (step === 'capture') {
       startCamera();
     }
@@ -59,7 +72,6 @@ export default function IDVerification({ candidate, onVerificationComplete }: ID
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
         
-        // Wait for video to be ready
         await new Promise((resolve) => {
           if (videoRef.current) {
             videoRef.current.onloadedmetadata = () => {
@@ -112,7 +124,6 @@ export default function IDVerification({ candidate, onVerificationComplete }: ID
     const canvas = document.createElement('canvas');
     const video = videoRef.current;
     
-    // Ensure video has dimensions
     const width = video.videoWidth || 1280;
     const height = video.videoHeight || 720;
     
@@ -126,10 +137,8 @@ export default function IDVerification({ candidate, onVerificationComplete }: ID
     
     const ctx = canvas.getContext('2d');
     if (ctx) {
-      // Draw the video frame to canvas
       ctx.drawImage(video, 0, 0, width, height);
       
-      // Convert to blob with high quality
       canvas.toBlob((blob) => {
         if (blob && blob.size > 0) {
           const reader = new FileReader();
@@ -169,20 +178,20 @@ export default function IDVerification({ candidate, onVerificationComplete }: ID
       return;
     }
 
+    if (!user) {
+      toast.error('Please log in to submit verification.');
+      return;
+    }
+
     setLoading(true);
     try {
-      // Convert data URL to blob
       const response = await fetch(capturedPhoto);
       const blob = await response.blob();
-      
       if (blob.size === 0) {
         throw new Error('Invalid image data');
       }
 
-      // Create a unique filename
       const fileName = `verification_${candidate.id}_${Date.now()}.jpg`;
-      
-      // Upload to Supabase Storage
       const { data: uploadData, error: uploadError } = await supabase.storage
         .from('verification-photos')
         .upload(fileName, blob, {
@@ -195,12 +204,10 @@ export default function IDVerification({ candidate, onVerificationComplete }: ID
         throw new Error('Failed to upload photo');
       }
 
-      // Get public URL
       const { data: urlData } = supabase.storage
         .from('verification-photos')
         .getPublicUrl(fileName);
 
-      // Store verification record in database
       const { data: verificationData, error: dbError } = await supabase
         .from('candidate_verifications')
         .insert({
@@ -208,7 +215,7 @@ export default function IDVerification({ candidate, onVerificationComplete }: ID
           verification_type: verificationType,
           id_number: idNumber || null,
           photo_url: urlData.publicUrl,
-          verification_status: 'approved' // Auto-approve since admin review is not needed
+          verification_status: 'approved'
         })
         .select()
         .single();
@@ -222,7 +229,7 @@ export default function IDVerification({ candidate, onVerificationComplete }: ID
       onVerificationComplete(verificationData);
     } catch (error) {
       console.error('Verification error:', error);
-      toast.error('Failed to submit verification. Please try again.');
+      toast.error(`Failed to submit verification: ${error.message}`);
     } finally {
       setLoading(false);
     }
@@ -236,11 +243,40 @@ export default function IDVerification({ candidate, onVerificationComplete }: ID
     }
   };
 
+  if (!user) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-indigo-50 via-blue-50 to-cyan-50 flex items-center justify-center p-4">
+        <div className="max-w-md w-full text-center">
+          <div className="bg-white/80 backdrop-blur-sm rounded-3xl shadow-2xl border border-white/20 p-8">
+            <h1 className="text-2xl font-bold text-gray-900 mb-4">Authentication Required</h1>
+            <p className="text-gray-600 mb-6">Please log in to verify your identity.</p>
+            <button
+              onClick={async () => {
+                const { error } = await supabase.auth.signInWithPassword({
+                  email: 'user@example.com',
+                  password: 'securepassword',
+                });
+                if (error) toast.error('Login failed: ' + error.message);
+                else {
+                  const { data: { user } } = await supabase.auth.getUser();
+                  setUser(user || null);
+                  toast.success('Logged in successfully!');
+                }
+              }}
+              className="w-full bg-gradient-to-r from-blue-600 to-indigo-600 text-white py-3 rounded-xl font-semibold hover:from-blue-700 hover:to-indigo-700 transition-all duration-200"
+            >
+              Log In
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-indigo-50 via-blue-50 to-cyan-50 flex items-center justify-center p-4">
       <div className="max-w-2xl w-full">
         <div className="bg-white/80 backdrop-blur-sm rounded-3xl shadow-2xl border border-white/20 p-8">
-          {/* Header */}
           {step === 'select' && (
             <div className="text-center mb-8">
               <div className="bg-gradient-to-r from-blue-500 to-indigo-600 w-20 h-20 rounded-full flex items-center justify-center mx-auto mb-6 shadow-lg">
@@ -262,7 +298,6 @@ export default function IDVerification({ candidate, onVerificationComplete }: ID
             </div>
           )}
 
-          {/* Step: Select ID Type */}
           {step === 'select' && (
             <div className="space-y-8">
               <div>
@@ -275,7 +310,7 @@ export default function IDVerification({ candidate, onVerificationComplete }: ID
                   ].map((option) => (
                     <button
                       key={option.type}
-                      onClick={() => setVerificationType(option.type as any)}
+                      onClick={() => setVerificationType(option.type as 'aadhar' | 'pan' | 'other')}
                       className={`p-6 border-2 rounded-2xl transition-all duration-300 text-left transform hover:scale-105 ${
                         verificationType === option.type
                           ? 'border-blue-500 bg-gradient-to-br from-blue-50 to-indigo-50 shadow-lg'
@@ -340,7 +375,6 @@ export default function IDVerification({ candidate, onVerificationComplete }: ID
             </div>
           )}
 
-          {/* Step: Capture */}
           {step === 'capture' && (
             <div>
               <div className="text-center mb-6">
@@ -373,7 +407,6 @@ export default function IDVerification({ candidate, onVerificationComplete }: ID
                 )}
                 <div className="absolute inset-0 border-4 border-dashed border-white/40 m-8 rounded-2xl pointer-events-none" />
                 
-                {/* Camera overlay guide */}
                 <div className="absolute top-4 left-4 right-4 bg-black/50 text-white p-3 rounded-xl">
                   <p className="text-sm text-center">Position your ID document within the dashed frame</p>
                 </div>
@@ -402,7 +435,6 @@ export default function IDVerification({ candidate, onVerificationComplete }: ID
             </div>
           )}
 
-          {/* Step: Review */}
           {step === 'review' && capturedPhoto && (
             <div>
               <div className="text-center mb-6">
