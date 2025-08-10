@@ -108,16 +108,21 @@ export const sendOTP = async (email: string, name: string, phone?: string) => {
 
 export const verifyOTP = async (email: string, otp: string) => {
   try {
-    const { data: candidate, error } = await supabase
+    const { data: candidates, error } = await supabase
       .from('candidates')
       .select('*')
       .eq('email', email)
-      .eq('otp_code', otp)
-      .single();
+      .eq('otp_code', otp);
 
-    if (error || !candidate) {
+    if (error) {
+      throw new Error('Database query failed');
+    }
+
+    if (!candidates || candidates.length === 0) {
       throw new Error('Invalid OTP');
     }
+
+    const candidate = candidates[0];
 
     const now = new Date();
     const expiry = new Date(candidate.otp_expires_at);
