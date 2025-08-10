@@ -13,7 +13,6 @@ import {
 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import toast from 'react-hot-toast';
-import { User as SupabaseUser } from '@supabase/supabase-js';
 
 interface IDVerificationProps {
   candidate: any; // Replace 'any' with a specific type if candidate structure is known
@@ -28,23 +27,11 @@ export default function IDVerification({ candidate, onVerificationComplete }: ID
   const [loading, setLoading] = useState<boolean>(false);
   const [cameraActive, setCameraActive] = useState<boolean>(false);
   const [cameraError, setCameraError] = useState<string | null>(null);
-  const [user, setUser] = useState<SupabaseUser | null>(null);
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
 
   useEffect(() => {
-    const checkAuth = async () => {
-      const { data: { user }, error } = await supabase.auth.getUser();
-      if (!user && !error) {
-        toast.error('Please log in to verify your identity.');
-        // Optionally redirect to login: window.location.href = '/login';
-      } else {
-        setUser(user || null);
-      }
-    };
-    checkAuth();
-
     if (step === 'capture') {
       startCamera();
     }
@@ -178,8 +165,8 @@ export default function IDVerification({ candidate, onVerificationComplete }: ID
       return;
     }
 
-    if (!user) {
-      toast.error('Please log in to submit verification.');
+    if (!candidate) {
+      toast.error('Candidate information not found.');
       return;
     }
 
@@ -242,36 +229,6 @@ export default function IDVerification({ candidate, onVerificationComplete }: ID
       default: return <User className="w-6 h-6" />;
     }
   };
-
-  if (!user) {
-    return (
-      <div className="min-h-screen bg-gradient-to-br from-indigo-50 via-blue-50 to-cyan-50 flex items-center justify-center p-4">
-        <div className="max-w-md w-full text-center">
-          <div className="bg-white/80 backdrop-blur-sm rounded-3xl shadow-2xl border border-white/20 p-8">
-            <h1 className="text-2xl font-bold text-gray-900 mb-4">Authentication Required</h1>
-            <p className="text-gray-600 mb-6">Please log in to verify your identity.</p>
-            <button
-              onClick={async () => {
-                const { error } = await supabase.auth.signInWithPassword({
-                  email: 'user@example.com',
-                  password: 'securepassword',
-                });
-                if (error) toast.error('Login failed: ' + error.message);
-                else {
-                  const { data: { user } } = await supabase.auth.getUser();
-                  setUser(user || null);
-                  toast.success('Logged in successfully!');
-                }
-              }}
-              className="w-full bg-gradient-to-r from-blue-600 to-indigo-600 text-white py-3 rounded-xl font-semibold hover:from-blue-700 hover:to-indigo-700 transition-all duration-200"
-            >
-              Log In
-            </button>
-          </div>
-        </div>
-      </div>
-    );
-  }
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-indigo-50 via-blue-50 to-cyan-50 flex items-center justify-center p-4">
