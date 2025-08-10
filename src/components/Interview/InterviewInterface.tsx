@@ -124,6 +124,12 @@ export default function InterviewInterface({ candidate, domain, examCode, onComp
   };
 
   const startExam = () => {
+    // Enter fullscreen as part of user gesture
+    document.documentElement.requestFullscreen().catch((error) => {
+      console.error('Failed to enter fullscreen:', error);
+      toast.error('Please allow fullscreen mode for the exam');
+    });
+    
     startTimer();
     setProctoringActive(true);
     toast.success('Exam started! Good luck!');
@@ -166,9 +172,9 @@ export default function InterviewInterface({ candidate, domain, examCode, onComp
 
       // Show warning
       if (violations.length >= 2) {
-        toast.error(`Warning: ${3 - violations.length} violations remaining before auto-submit!`);
+        toast.error(`Warning: ${3 - violations.length - 1} violations remaining before auto-submit!`);
       } else {
-        toast.warning(`Violation detected: ${type}`);
+        toast(`Violation detected: ${type}`, { icon: '⚠️' });
       }
     } catch (error) {
       console.error('Failed to log violation:', error);

@@ -70,9 +70,6 @@ export default function ProctoringSystem({ onViolation, isActive }: ProctoringSy
       // Start recording
       startRecording(mediaStream);
 
-      // Enter full screen
-      await enterFullScreen();
-
       // Setup event listeners after fullscreen is entered
       setTimeout(() => {
         setupEventListeners();
@@ -258,7 +255,7 @@ export default function ProctoringSystem({ onViolation, isActive }: ProctoringSy
       
       if (!videoTrack.enabled) {
         onViolation('camera_disabled', 'Candidate disabled camera');
-        toast.warning('Camera disabled - this may affect your exam');
+        toast('Camera disabled - this may affect your exam', { icon: '⚠️' });
       }
     }
   };
@@ -273,7 +270,7 @@ export default function ProctoringSystem({ onViolation, isActive }: ProctoringSy
       
       if (!audioTrack.enabled) {
         onViolation('microphone_disabled', 'Candidate disabled microphone');
-        toast.warning('Microphone disabled - this may affect your exam');
+        toast('Microphone disabled - this may affect your exam', { icon: '⚠️' });
       }
     }
   };
